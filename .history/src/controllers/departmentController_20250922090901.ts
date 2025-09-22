@@ -40,9 +40,9 @@ export const updateDepartment = async (req: Request, res: Response) => {
       .json({ success: false, message: "Department not found" });
   res.json({ success: true, data: updated });
 };
-
 export const deleteDepartment = async (req: Request, res: Response) => {
   const id = parseInt(req.params.id);
+  console.log("Deleting department id:", id);
 
   if (isNaN(id)) {
     return res

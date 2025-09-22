@@ -43,22 +43,27 @@ export const updateDepartment = async (req: Request, res: Response) => {
 
 export const deleteDepartment = async (req: Request, res: Response) => {
   const id = parseInt(req.params.id);
-
-  if (isNaN(id)) {
+  if (!id || isNaN(id)) {
     return res
       .status(400)
       .json({ success: false, message: "Invalid department ID" });
   }
 
-  const deleted = await DepartmentModel.delete(id);
+  try {
+    const deleted = await DepartmentModel.delete(id);
+    if (!deleted) {
+      // Có thể do department không tồn tại
+      return res.status(404).json({
+        success: false,
+        message: "Department not found or cannot delete",
+      });
+    }
 
-  if (!deleted) {
-    return res.status(400).json({
-      success: false,
-      message:
-        "Department not found or cannot be deleted (maybe linked in history)",
-    });
+    return res.json({ success: true, message: "Department deleted" });
+  } catch (err) {
+    console.error("Error deleting department:", err);
+    return res
+      .status(500)
+      .json({ success: false, message: "Internal server error" });
   }
-
-  res.json({ success: true, message: "Department deleted" });
 };

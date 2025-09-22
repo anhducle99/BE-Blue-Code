@@ -43,22 +43,12 @@ export const updateDepartment = async (req: Request, res: Response) => {
 
 export const deleteDepartment = async (req: Request, res: Response) => {
   const id = parseInt(req.params.id);
-
-  if (isNaN(id)) {
-    return res
-      .status(400)
-      .json({ success: false, message: "Invalid department ID" });
-  }
-
-  const deleted = await DepartmentModel.delete(id);
-
-  if (!deleted) {
+  const success = await DepartmentModel.delete(id);
+  if (!success) {
     return res.status(400).json({
       success: false,
-      message:
-        "Department not found or cannot be deleted (maybe linked in history)",
+      message: "Cannot delete department (may have foreign key constraint)",
     });
   }
-
   res.json({ success: true, message: "Department deleted" });
 };

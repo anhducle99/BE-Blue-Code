@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
 import { DepartmentModel, IDepartment } from "../models/Department";
+import db from "../db";
 
 export const getDepartments = async (req: Request, res: Response) => {
   const departments = await DepartmentModel.findAll();
@@ -41,24 +42,36 @@ export const updateDepartment = async (req: Request, res: Response) => {
   res.json({ success: true, data: updated });
 };
 
+// 🟢 Xoá an toàn
 export const deleteDepartment = async (req: Request, res: Response) => {
-  const id = parseInt(req.params.id);
+  try {
+    const id = parseInt(req.params.id);
 
-  if (isNaN(id)) {
-    return res
-      .status(400)
-      .json({ success: false, message: "Invalid department ID" });
+    // Check nếu dept còn trong history
+    const historyCheck = await db.query(
+      `SELECT COUNT(*) FROM history 
+       WHERE department_from = $1 OR department_to = $1`,
+      [id]
+    );
+
+    if (parseInt(historyCheck.rows[0].count) > 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Không thể xoá khoa này vì đang có lịch sử liên quan",
+      });
+    }
+
+    const deleted = await DepartmentModel.delete(id);
+
+    if (!deleted) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Department not found" });
+    }
+
+    res.json({ success: true, message: "Department deleted" });
+  } catch (err) {
+    console.error("Error deleting department:", err);
+    res.status(500).json({ success: false, message: "Server error" });
   }
-
-  const deleted = await DepartmentModel.delete(id);
-
-  if (!deleted) {
-    return res.status(400).json({
-      success: false,
-      message:
-        "Department not found or cannot be deleted (maybe linked in history)",
-    });
-  }
-
-  res.json({ success: true, message: "Department deleted" });
 };

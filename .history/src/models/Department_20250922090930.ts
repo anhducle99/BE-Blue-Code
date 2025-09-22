@@ -25,13 +25,32 @@ export class DepartmentModel {
     return rows[0] || null;
   }
 
-  static async create(dept: Partial<IDepartment>): Promise<IDepartment> {
-    const { name, phone, alert_group } = dept;
-    const { rows } = await pool.query(
-      "INSERT INTO departments (name, phone, alert_group, created_at, updated_at) VALUES ($1, $2, $3, NOW(), NOW()) RETURNING id, name, phone, alert_group, created_at, updated_at",
-      [name, phone, alert_group]
-    );
-    return rows[0];
+  static async delete(id: number): Promise<boolean> {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      // Xoá tất cả history liên quan
+      await client.query(
+        "DELETE FROM history WHERE department_from=$1 OR department_to=$1",
+        [id]
+      );
+
+      // Xoá department
+      const result = await client.query("DELETE FROM departments WHERE id=$1", [
+        id,
+      ]);
+
+      await client.query("COMMIT");
+
+      return (result.rowCount ?? 0) > 0;
+    } catch (err) {
+      await client.query("ROLLBACK");
+      console.error("Failed to delete department with cascade:", err);
+      return false;
+    } finally {
+      client.release();
+    }
   }
 
   static async update(
@@ -46,22 +65,30 @@ export class DepartmentModel {
     return rows[0] || null;
   }
 
+  /**
+   * Xoá department kèm cascade các bản ghi liên quan trong bảng history
+   * @param id ID department cần xoá
+   * @returns true nếu xoá thành công, false nếu lỗi
+   */
   static async delete(id: number): Promise<boolean> {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
 
+      // Xoá tất cả lịch sử liên quan
       await client.query(
         "DELETE FROM history WHERE department_from=$1 OR department_to=$1",
         [id]
       );
 
+      // Xoá department
       const result = await client.query("DELETE FROM departments WHERE id=$1", [
         id,
       ]);
 
       await client.query("COMMIT");
 
+      // rowCount trả về số bản ghi bị xoá
       return (result.rowCount ?? 0) > 0;
     } catch (err) {
       await client.query("ROLLBACK");

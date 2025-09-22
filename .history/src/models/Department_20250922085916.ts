@@ -25,10 +25,10 @@ export class DepartmentModel {
     return rows[0] || null;
   }
 
-  static async create(dept: Partial<IDepartment>): Promise<IDepartment> {
+  static async create(dept: IDepartment): Promise<IDepartment> {
     const { name, phone, alert_group } = dept;
     const { rows } = await pool.query(
-      "INSERT INTO departments (name, phone, alert_group, created_at, updated_at) VALUES ($1, $2, $3, NOW(), NOW()) RETURNING id, name, phone, alert_group, created_at, updated_at",
+      "INSERT INTO departments (name, phone, alert_group) VALUES ($1, $2, $3) RETURNING id, name, phone, alert_group, created_at, updated_at",
       [name, phone, alert_group]
     );
     return rows[0];
@@ -46,29 +46,18 @@ export class DepartmentModel {
     return rows[0] || null;
   }
 
+  // 🔹 DELETE trả về true/false
   static async delete(id: number): Promise<boolean> {
-    const client = await pool.connect();
     try {
-      await client.query("BEGIN");
-
-      await client.query(
-        "DELETE FROM history WHERE department_from=$1 OR department_to=$1",
+      const { rowCount } = await pool.query(
+        "DELETE FROM departments WHERE id=$1",
         [id]
       );
-
-      const result = await client.query("DELETE FROM departments WHERE id=$1", [
-        id,
-      ]);
-
-      await client.query("COMMIT");
-
-      return (result.rowCount ?? 0) > 0;
-    } catch (err) {
-      await client.query("ROLLBACK");
-      console.error("Failed to delete department with cascade:", err);
+      return rowCount > 0; // true nếu có bản ghi bị xoá
+    } catch (err: any) {
+      // Nếu vi phạm FK hoặc lỗi khác thì log ra
+      console.error("Department delete error:", err.message || err);
       return false;
-    } finally {
-      client.release();
     }
   }
 }

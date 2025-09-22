@@ -43,6 +43,7 @@ export const updateDepartment = async (req: Request, res: Response) => {
 
 export const deleteDepartment = async (req: Request, res: Response) => {
   const id = parseInt(req.params.id);
+  console.log("Deleting department id:", id);
 
   if (isNaN(id)) {
     return res
