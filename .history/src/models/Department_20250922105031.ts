@@ -46,16 +46,21 @@ export class DepartmentModel {
     return rows[0] || null;
   }
 
+  /**
+   * Xoá department theo ID, kèm cascade xoá các record liên quan trong bảng history
+   */
   static async delete(id: number): Promise<boolean> {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
 
+      // Xoá các lịch sử liên quan
       await client.query(
         "DELETE FROM history WHERE department_from=$1 OR department_to=$1",
         [id]
       );
 
+      // Xoá department
       const result = await client.query("DELETE FROM departments WHERE id=$1", [
         id,
       ]);

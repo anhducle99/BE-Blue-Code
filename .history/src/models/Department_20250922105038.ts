@@ -56,6 +56,7 @@ export class DepartmentModel {
         [id]
       );
 
+      // Xoá department
       const result = await client.query("DELETE FROM departments WHERE id=$1", [
         id,
       ]);

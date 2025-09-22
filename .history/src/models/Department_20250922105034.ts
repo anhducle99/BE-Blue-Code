@@ -51,11 +51,13 @@ export class DepartmentModel {
     try {
       await client.query("BEGIN");
 
+      // Xoá các lịch sử liên quan
       await client.query(
         "DELETE FROM history WHERE department_from=$1 OR department_to=$1",
         [id]
       );
 
+      // Xoá department
       const result = await client.query("DELETE FROM departments WHERE id=$1", [
         id,
       ]);
