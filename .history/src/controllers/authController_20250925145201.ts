@@ -1,3 +1,4 @@
+// controllers/authController.ts
 import { Request, Response } from "express";
 import { UserModel } from "../models/User";
 import { SignJWT } from "jose";

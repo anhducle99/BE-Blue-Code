@@ -1,3 +1,4 @@
+// controllers/authController.ts
 import { Request, Response } from "express";
 import { UserModel } from "../models/User";
 import { SignJWT } from "jose";
@@ -13,6 +14,7 @@ export const register = async (req: Request, res: Response) => {
         .json({ success: false, message: "Email đã tồn tại" });
     }
 
+    // ✅ không hash ở đây, gửi password thô
     const user = await UserModel.create({
       name,
       email,

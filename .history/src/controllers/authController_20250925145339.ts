@@ -13,6 +13,7 @@ export const register = async (req: Request, res: Response) => {
         .json({ success: false, message: "Email đã tồn tại" });
     }
 
+    // Truyền password thô vào, UserModel.create sẽ tự hash
     const user = await UserModel.create({
       name,
       email,
@@ -33,6 +34,9 @@ export const login = async (req: Request, res: Response) => {
   try {
     const user = await UserModel.findByEmail(email);
 
+    console.log("👉 Password FE gửi lên:", password);
+    console.log("🔑 Password DB lưu:", user?.password);
+
     if (!user || !user.password) {
       return res
         .status(400)
@@ -40,7 +44,7 @@ export const login = async (req: Request, res: Response) => {
     }
 
     const isMatch = await bcrypt.compare(password, user.password);
-
+    console.log("✅ bcrypt result:", isMatch);
     if (!isMatch)
       return res
         .status(400)
