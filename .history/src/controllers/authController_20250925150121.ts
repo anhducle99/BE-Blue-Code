@@ -13,10 +13,12 @@ export const register = async (req: Request, res: Response) => {
         .json({ success: false, message: "Email đã tồn tại" });
     }
 
+    const hashedPassword = await bcrypt.hash(password, 10);
+
     const user = await UserModel.create({
       name,
       email,
-      password,
+      password: hashedPassword,
       role,
     });
 

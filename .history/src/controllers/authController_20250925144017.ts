@@ -13,6 +13,7 @@ export const register = async (req: Request, res: Response) => {
         .json({ success: false, message: "Email đã tồn tại" });
     }
 
+    // Truyền password thô vào, UserModel.create sẽ tự hash
     const user = await UserModel.create({
       name,
       email,
