@@ -102,6 +102,7 @@ export const updateUser = async (req: Request, res: Response) => {
   }
 };
 
+// DELETE /users/:id
 export const deleteUser = async (req: Request, res: Response) => {
   const id = parseInt(req.params.id);
   if (isNaN(id))

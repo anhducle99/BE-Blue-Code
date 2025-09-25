@@ -31,6 +31,7 @@ export const getUser = async (req: Request, res: Response) => {
   }
 };
 
+// POST /users
 export const createUser = async (req: Request, res: Response) => {
   const {
     name,
@@ -77,6 +78,7 @@ export const createUser = async (req: Request, res: Response) => {
   }
 };
 
+// PUT /users/:id
 export const updateUser = async (req: Request, res: Response) => {
   const id = parseInt(req.params.id);
   if (isNaN(id))
@@ -102,6 +104,7 @@ export const updateUser = async (req: Request, res: Response) => {
   }
 };
 
+// DELETE /users/:id
 export const deleteUser = async (req: Request, res: Response) => {
   const id = parseInt(req.params.id);
   if (isNaN(id))
