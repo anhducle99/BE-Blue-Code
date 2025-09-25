@@ -35,6 +35,7 @@ export class UserModel {
     return rows;
   }
 
+  // Lấy user theo id
   static async findById(id: number): Promise<IUser | null> {
     const { rows } = await pool.query(
       `
@@ -52,6 +53,7 @@ export class UserModel {
     return rows[0] || null;
   }
 
+  // Lấy user theo email
   static async findByEmail(email: string): Promise<IUser | null> {
     const { rows } = await pool.query(
       `
@@ -69,6 +71,7 @@ export class UserModel {
     return rows[0] || null;
   }
 
+  // Tạo user
   static async create(user: IUser): Promise<IUser> {
     const {
       name,
@@ -108,6 +111,7 @@ export class UserModel {
     return rows[0];
   }
 
+  // Cập nhật user
   static async update(id: number, user: Partial<IUser>): Promise<IUser | null> {
     const fields: string[] = [];
     const values: any[] = [];
@@ -146,6 +150,7 @@ export class UserModel {
     return rows[0] || null;
   }
 
+  // Xóa user
   static async delete(id: number): Promise<void> {
     await pool.query(`DELETE FROM users WHERE id=$1`, [id]);
   }
