@@ -11,7 +11,6 @@ import organizationRoutes from "./routes/organizationRoutes";
 import historyRoutes from "./routes/historyRoutes";
 import userRoutes from "./routes/userRoutes";
 import statisticsRoutes from "./routes/statisticsRoutes";
-import callLogRoutes from "./routes/callLogRoutes";
 
 dotenv.config();
 const app = express();
@@ -26,7 +25,6 @@ app.use("/api/history", historyRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/statistics", statisticsRoutes);
 app.use("/api/call", callRoutes);
-app.use("/api/call-logs", callLogRoutes);
 
 app.use(
   (
@@ -49,6 +47,8 @@ const io = new SocketServer(server, {
 setIO(io);
 
 io.on("connection", (socket) => {
+  console.log("🔌 New socket connected:", socket.id);
+
   socket.on("register", (data) => {
     const { name, department_id, department_name } = data;
     const key = `${department_name}_${department_name}`;
@@ -58,6 +58,7 @@ io.on("connection", (socket) => {
       department_id,
       department_name,
     });
+    console.log(`✅ Registered ${key} (${socket.id})`);
   });
 
   socket.on("startCall", ({ callId, from, targets }) => {
@@ -72,14 +73,17 @@ io.on("connection", (socket) => {
   });
 
   socket.on("callAccepted", ({ callId, from }) => {
+    console.log(`✅ ${from} đã XÁC NHẬN cuộc gọi ${callId}`);
     io.emit("callAccepted", { callId, from });
   });
 
   socket.on("callRejected", ({ callId, from }) => {
+    console.log(`❌ ${from} đã TỪ CHỐI cuộc gọi ${callId}`);
     io.emit("callRejected", { callId, from });
   });
 
   socket.on("callTimeout", ({ callId, from }) => {
+    console.log(`⏱️ ${from} không phản hồi cuộc gọi ${callId}`);
     io.emit("callTimeout", { callId, from });
   });
 
@@ -87,6 +91,7 @@ io.on("connection", (socket) => {
     for (const [key, value] of onlineUsers.entries()) {
       if (value.socketId === socket.id) {
         onlineUsers.delete(key);
+        console.log(`🗑️ Xóa user offline: ${key}`);
       }
     }
   });

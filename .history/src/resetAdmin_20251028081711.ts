@@ -16,7 +16,12 @@ async function resetAdmin() {
     const values = ["Admin", email, hashedPassword, "Admin"];
     const res = await pool.query(query, values);
 
+    console.log("✅ Admin mới đã được tạo:");
     console.table(res.rows);
+
+    console.log("🎯 Giờ bạn có thể test login trên Postman với:");
+    console.log(`   Email: ${email}`);
+    console.log(`   Password: ${plainPassword}`);
   } catch (err) {
     console.error("❌ Lỗi khi reset admin:", err);
   } finally {

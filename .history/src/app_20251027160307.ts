@@ -11,7 +11,6 @@ import organizationRoutes from "./routes/organizationRoutes";
 import historyRoutes from "./routes/historyRoutes";
 import userRoutes from "./routes/userRoutes";
 import statisticsRoutes from "./routes/statisticsRoutes";
-import callLogRoutes from "./routes/callLogRoutes";
 
 dotenv.config();
 const app = express();
@@ -26,7 +25,6 @@ app.use("/api/history", historyRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/statistics", statisticsRoutes);
 app.use("/api/call", callRoutes);
-app.use("/api/call-logs", callLogRoutes);
 
 app.use(
   (

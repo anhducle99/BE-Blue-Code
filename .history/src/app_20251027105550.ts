@@ -11,7 +11,6 @@ import organizationRoutes from "./routes/organizationRoutes";
 import historyRoutes from "./routes/historyRoutes";
 import userRoutes from "./routes/userRoutes";
 import statisticsRoutes from "./routes/statisticsRoutes";
-import callLogRoutes from "./routes/callLogRoutes";
 
 dotenv.config();
 const app = express();
@@ -26,7 +25,6 @@ app.use("/api/history", historyRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/statistics", statisticsRoutes);
 app.use("/api/call", callRoutes);
-app.use("/api/call-logs", callLogRoutes);
 
 app.use(
   (
@@ -51,7 +49,8 @@ setIO(io);
 io.on("connection", (socket) => {
   socket.on("register", (data) => {
     const { name, department_id, department_name } = data;
-    const key = `${department_name}_${department_name}`;
+    const key = `${data.department_name}_${data.department_name}`;
+
     onlineUsers.set(key, {
       socketId: socket.id,
       name,
@@ -64,23 +63,15 @@ io.on("connection", (socket) => {
     targets.forEach((target: string) => {
       const user = onlineUsers.get(`${target}_${target}`);
       if (user) {
-        io.to(user.socketId).emit("incomingCall", { callId, from });
+        io.to(user.socketId).emit("incomingCall", {
+          callId,
+          from,
+        });
+        console.log(`Gửi tín hiệu đến ${target}`);
       } else {
-        console.log(`Không tìm thấy ${target}`);
+        console.log(`⚠️ Không tìm thấy socket cho ${target}`);
       }
     });
-  });
-
-  socket.on("callAccepted", ({ callId, from }) => {
-    io.emit("callAccepted", { callId, from });
-  });
-
-  socket.on("callRejected", ({ callId, from }) => {
-    io.emit("callRejected", { callId, from });
-  });
-
-  socket.on("callTimeout", ({ callId, from }) => {
-    io.emit("callTimeout", { callId, from });
   });
 
   socket.on("disconnect", () => {
