@@ -26,7 +26,6 @@ app.use("/api/history", historyRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/statistics", statisticsRoutes);
 app.use("/api/call", callRoutes);
-app.use("/api/call-logs", callLogRoutes);
 
 app.use(
   (

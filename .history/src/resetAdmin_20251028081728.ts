@@ -16,6 +16,7 @@ async function resetAdmin() {
     const values = ["Admin", email, hashedPassword, "Admin"];
     const res = await pool.query(query, values);
 
+    console.log("✅ Admin mới đã được tạo:");
     console.table(res.rows);
   } catch (err) {
     console.error("❌ Lỗi khi reset admin:", err);

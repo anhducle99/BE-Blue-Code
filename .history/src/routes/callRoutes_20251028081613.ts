@@ -20,15 +20,15 @@ router.post("/", (req, res) => {
           toDept: targetUser.department_name,
           toName: targetUser.name,
         });
-        console.log(`emitted incomingCall to ${key}`);
+        console.log(`   ✅ emitted incomingCall to ${key}`);
       } else {
-        console.warn("target not online:", key);
+        console.warn("   ⚠️ target not online:", key);
       }
     });
 
     res.json({ success: true, callId });
   } catch (err) {
-    console.error("Error in /api/call:", err);
+    console.error("❌ Error in /api/call:", err);
     res.status(500).json({ success: false });
   }
 });

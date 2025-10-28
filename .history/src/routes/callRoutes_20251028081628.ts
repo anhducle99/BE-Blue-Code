@@ -28,7 +28,7 @@ router.post("/", (req, res) => {
 
     res.json({ success: true, callId });
   } catch (err) {
-    console.error("Error in /api/call:", err);
+    console.error("❌ Error in /api/call:", err);
     res.status(500).json({ success: false });
   }
 });

@@ -3,7 +3,9 @@ import dotenv from "dotenv";
 import cors from "cors";
 import http from "http";
 import { Server as SocketServer } from "socket.io";
+
 import { onlineUsers, setIO } from "./socketStore";
+
 import callRoutes from "./routes/callRoutes";
 import authRoutes from "./routes/authRoutes";
 import departmentRoutes from "./routes/departmentRoutes";
@@ -11,7 +13,6 @@ import organizationRoutes from "./routes/organizationRoutes";
 import historyRoutes from "./routes/historyRoutes";
 import userRoutes from "./routes/userRoutes";
 import statisticsRoutes from "./routes/statisticsRoutes";
-import callLogRoutes from "./routes/callLogRoutes";
 
 dotenv.config();
 const app = express();
@@ -26,7 +27,6 @@ app.use("/api/history", historyRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/statistics", statisticsRoutes);
 app.use("/api/call", callRoutes);
-app.use("/api/call-logs", callLogRoutes);
 
 app.use(
   (
@@ -49,51 +49,44 @@ const io = new SocketServer(server, {
 setIO(io);
 
 io.on("connection", (socket) => {
+  console.log("New socket connection:", socket.id);
+
   socket.on("register", (data) => {
     const { name, department_id, department_name } = data;
-    const key = `${department_name}_${department_name}`;
+    const key = `${data.department_name}_${data.department_name}`;
+
     onlineUsers.set(key, {
       socketId: socket.id,
       name,
       department_id,
       department_name,
     });
-  });
 
-  socket.on("startCall", ({ callId, from, targets }) => {
-    targets.forEach((target: string) => {
-      const user = onlineUsers.get(`${target}_${target}`);
-      if (user) {
-        io.to(user.socketId).emit("incomingCall", { callId, from });
-      } else {
-        console.log(`Không tìm thấy ${target}`);
-      }
-    });
-  });
-
-  socket.on("callAccepted", ({ callId, from }) => {
-    io.emit("callAccepted", { callId, from });
-  });
-
-  socket.on("callRejected", ({ callId, from }) => {
-    io.emit("callRejected", { callId, from });
-  });
-
-  socket.on("callTimeout", ({ callId, from }) => {
-    io.emit("callTimeout", { callId, from });
+    console.log("📱 register event:", data);
+    console.log(
+      "📍 Online users:",
+      Array.from(onlineUsers, ([key, value]) => ({
+        key,
+        socketId: value.socketId,
+        name: value.name,
+        dept: value.department_name,
+      }))
+    );
   });
 
   socket.on("disconnect", () => {
+    console.log("❌ Disconnected:", socket.id);
     for (const [key, value] of onlineUsers.entries()) {
       if (value.socketId === socket.id) {
         onlineUsers.delete(key);
+        console.log("🗑 Removed:", key);
       }
     }
   });
 });
 
 server.listen(PORT, () => {
-  console.log(`REST API + Socket.IO running on http://localhost:${PORT}`);
+  console.log(`🚀 REST API + Socket.IO running on http://localhost:${PORT}`);
 });
 
 export default app;
