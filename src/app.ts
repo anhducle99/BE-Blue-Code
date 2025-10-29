@@ -2,6 +2,7 @@ import express from "express";
 import dotenv from "dotenv";
 import cors from "cors";
 import http from "http";
+import { pool } from "./models/db";
 import { Server as SocketServer } from "socket.io";
 import { onlineUsers, setIO } from "./socketStore";
 import callRoutes from "./routes/callRoutes";
@@ -11,7 +12,6 @@ import organizationRoutes from "./routes/organizationRoutes";
 import historyRoutes from "./routes/historyRoutes";
 import userRoutes from "./routes/userRoutes";
 import statisticsRoutes from "./routes/statisticsRoutes";
-import callLogRoutes from "./routes/callLogRoutes";
 
 dotenv.config();
 const app = express();
@@ -26,7 +26,6 @@ app.use("/api/history", historyRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/statistics", statisticsRoutes);
 app.use("/api/call", callRoutes);
-app.use("/api/call-logs", callLogRoutes);
 
 app.use(
   (
@@ -54,33 +53,52 @@ io.on("connection", (socket) => {
     const key = `${department_name}_${department_name}`;
     onlineUsers.set(key, {
       socketId: socket.id,
-      name,
-      department_id,
-      department_name,
+      name: data.name,
+      department_id: data.department_id,
+      department_name: data.department_name,
     });
   });
 
-  socket.on("startCall", ({ callId, from, targets }) => {
-    targets.forEach((target: string) => {
-      const user = onlineUsers.get(`${target}_${target}`);
-      if (user) {
-        io.to(user.socketId).emit("incomingCall", { callId, from });
-      } else {
-        console.log(`Không tìm thấy ${target}`);
-      }
-    });
+  socket.on("callAccepted", async ({ callId, toDept }) => {
+    try {
+      await pool.query(
+        `UPDATE call_logs
+       SET status = 'accepted', accepted_at = NOW()
+       WHERE call_id = $1 AND to_user = $2`,
+        [callId, toDept]
+      );
+      io.emit("callStatusUpdate", { callId, toDept, status: "accepted" });
+    } catch (err) {
+      console.error("callAccepted error:", err);
+    }
   });
 
-  socket.on("callAccepted", ({ callId, from }) => {
-    io.emit("callAccepted", { callId, from });
+  socket.on("callRejected", async ({ callId, toDept }) => {
+    try {
+      await pool.query(
+        `UPDATE call_logs
+       SET status = 'rejected', rejected_at = NOW()
+       WHERE call_id = $1 AND to_user = $2`,
+        [callId, toDept]
+      );
+      io.emit("callStatusUpdate", { callId, toDept, status: "rejected" });
+    } catch (err) {
+      console.error("callRejected error:", err);
+    }
   });
 
-  socket.on("callRejected", ({ callId, from }) => {
-    io.emit("callRejected", { callId, from });
-  });
-
-  socket.on("callTimeout", ({ callId, from }) => {
-    io.emit("callTimeout", { callId, from });
+  socket.on("callTimeout", async ({ callId, toDept }) => {
+    try {
+      await pool.query(
+        `UPDATE call_logs
+       SET status = 'unreachable', rejected_at = NOW()
+       WHERE call_id = $1 AND to_user = $2 AND status = 'pending'`,
+        [callId, toDept]
+      );
+      io.emit("callStatusUpdate", { callId, toDept, status: "unreachable" });
+    } catch (err) {
+      console.error("callTimeout error:", err);
+    }
   });
 
   socket.on("disconnect", () => {
