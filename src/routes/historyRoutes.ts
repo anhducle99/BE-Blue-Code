@@ -1,9 +1,7 @@
-import { Router } from "express";
-import { getHistory, createHistory } from "../controllers/historyController";
+import express from "express";
+import { getCallHistory } from "../controllers/historyController";
 
-const router = Router();
-
-router.get("/", getHistory);
-router.post("/", createHistory);
+const router = express.Router();
+router.get("/", getCallHistory);
 
 export default router;
