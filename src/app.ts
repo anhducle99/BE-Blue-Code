@@ -2,6 +2,7 @@ import express from "express";
 import dotenv from "dotenv";
 import cors from "cors";
 import http from "http";
+import { networkInterfaces } from "os";
 import { pool } from "./models/db";
 import { Server as SocketServer } from "socket.io";
 import { onlineUsers, setIO } from "./socketStore";
@@ -17,7 +18,60 @@ dotenv.config();
 const app = express();
 
 app.use(express.json());
-app.use(cors({ origin: "http://localhost:3000", credentials: true }));
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      if (!origin) {
+        return callback(null, true);
+      }
+
+      if (origin.includes("localhost") || origin.includes("127.0.0.1")) {
+        return callback(null, true);
+      }
+
+      if (/^http:\/\/192\.165\.15\.\d+:3000$/.test(origin)) {
+        return callback(null, true);
+      }
+
+      const isDevelopment = process.env.NODE_ENV !== "production";
+      if (isDevelopment) {
+        return callback(null, true);
+      }
+
+      callback(new Error("Not allowed by CORS"));
+    },
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  })
+);
+
+app.options("/api/info", cors());
+app.get("/api/info", cors({ origin: true }), (req, res) => {
+  const origin = req.headers.origin || "";
+  const hostname = req.headers.host?.split(":")[0] || "localhost";
+
+  let apiUrl = `http://localhost:${PORT}`;
+
+  if (origin.includes("192.165.15.")) {
+    const match = origin.match(/http:\/\/(\d+\.\d+\.\d+\.\d+):/);
+    if (match) {
+      apiUrl = `http://${match[1]}:${PORT}`;
+    } else {
+      apiUrl = `http://${networkIP}:${PORT}`;
+    }
+  } else if (hostname !== "localhost" && hostname !== "127.0.0.1") {
+    apiUrl = `http://${hostname}:${PORT}`;
+  }
+
+  res.json({
+    apiUrl,
+    socketUrl: apiUrl,
+    origin,
+    hostname,
+    message: "Use this apiUrl in your frontend config",
+  });
+});
 
 app.use("/api/auth", authRoutes);
 app.use("/api/departments", departmentRoutes);
@@ -40,10 +94,51 @@ app.use(
 );
 
 const PORT = process.env.PORT || 5000;
+
+const getNetworkIP = () => {
+  const interfaces = networkInterfaces();
+  for (const name of Object.keys(interfaces)) {
+    for (const iface of interfaces[name] || []) {
+      if (iface.family === "IPv4" && !iface.internal) {
+        if (iface.address.startsWith("192.165.15.")) {
+          return iface.address;
+        }
+      }
+    }
+  }
+  return "192.165.15.28";
+};
+
+const networkIP = getNetworkIP();
 const server = http.createServer(app);
 
 const io = new SocketServer(server, {
-  cors: { origin: "http://localhost:3000", credentials: true },
+  cors: {
+    origin: (origin, callback) => {
+      if (!origin) {
+        return callback(null, true);
+      }
+
+      if (origin.includes("localhost") || origin.includes("127.0.0.1")) {
+        return callback(null, true);
+      }
+
+      if (/^http:\/\/192\.165\.15\.\d+:\d+$/.test(origin)) {
+        return callback(null, true);
+      }
+
+      const isDevelopment = process.env.NODE_ENV !== "production";
+      if (isDevelopment) {
+        return callback(null, true);
+      }
+
+      callback(new Error("Not allowed by CORS"));
+    },
+    credentials: true,
+    methods: ["GET", "POST"],
+  },
+  transports: ["websocket", "polling"],
+  allowEIO3: true,
 });
 setIO(io);
 
@@ -110,8 +205,10 @@ io.on("connection", (socket) => {
   });
 });
 
-server.listen(PORT, () => {
+server.listen(Number(PORT), "0.0.0.0", () => {
   console.log(`REST API + Socket.IO running on http://localhost:${PORT}`);
+  console.log(`Also accessible at http://${networkIP}:${PORT}`);
+  console.log(`WebSocket available at ws://${networkIP}:${PORT}/socket.io/`);
 });
 
 export default app;
