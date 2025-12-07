@@ -1,7 +1,7 @@
 import { Router } from "express";
-import { pool } from "../models/db";
-import { getIO, onlineUsers } from "../socketStore";
-import { v4 as uuidv4 } from "uuid";
+import { CallLogModel } from "../models/CallLog.js";
+import { getIO, onlineUsers } from "../socketStore.js";
+import { randomUUID } from "crypto";
 
 const router = Router();
 
@@ -9,22 +9,19 @@ router.post("/", async (req, res) => {
   try {
     const { targetKeys, message, fromDept, image_url } = req.body;
     const io = getIO();
-    const callId = uuidv4();
+    const callId = randomUUID();
 
     for (const key of targetKeys) {
       const targetUser = onlineUsers.get(key);
 
-      await pool.query(
-        `INSERT INTO call_logs (call_id, from_user, to_user, message, image_url, status, created_at)
-         VALUES ($1, $2, $3, $4, $5, 'pending', NOW())`,
-        [
-          callId,
-          fromDept,
-          key.split("_")[0],
-          message || null,
-          image_url || null,
-        ]
-      );
+      await CallLogModel.create({
+        call_id: callId,
+        from_user: fromDept,
+        to_user: key.split("_")[0],
+        message: message || undefined,
+        image_url: image_url || undefined,
+        status: "pending",
+      });
 
       if (targetUser) {
         io.to(targetUser.socketId).emit("incomingCall", {
@@ -49,15 +46,8 @@ router.post("/", async (req, res) => {
 router.get("/", async (req, res) => {
   try {
     const { department } = req.query;
-    const { rows } = await pool.query(
-      `
-      SELECT * FROM call_logs
-      WHERE from_user = $1 OR to_user = $1
-      ORDER BY created_at DESC
-    `,
-      [department]
-    );
-    res.json({ success: true, data: rows });
+    const logs = await CallLogModel.findByDepartment(department as string);
+    res.json({ success: true, data: logs });
   } catch (err) {
     console.error("Error in GET /api/call:", err);
     res.status(500).json({ success: false });

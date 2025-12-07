@@ -1,53 +1,31 @@
 import { Request, Response } from "express";
-import { pool } from "../models/db";
+import { CallLogModel } from "../models/CallLog.js";
 
 export const getCallHistory = async (req: Request, res: Response) => {
   try {
     const { sender, receiver, startDate, endDate } = req.query;
 
-    let query = `
-      SELECT
-        id,
-        call_id,
-        from_user AS sender,
-        to_user AS receiver,
-        message,
-        status,
-        created_at,
-        accepted_at,
-        rejected_at,
-        image_url
-      FROM call_logs
-      WHERE 1=1
-    `;
+    const logs = await CallLogModel.findByFilters({
+      sender: sender as string,
+      receiver: receiver as string,
+      startDate: startDate as string,
+      endDate: endDate as string,
+    });
 
-    const params: any[] = [];
-    let paramIndex = 1;
+    const result = logs.map((log) => ({
+      id: log.id,
+      call_id: log.call_id,
+      sender: log.from_user,
+      receiver: log.to_user,
+      message: log.message,
+      status: log.status,
+      created_at: log.created_at,
+      accepted_at: log.accepted_at,
+      rejected_at: log.rejected_at,
+      image_url: log.image_url,
+    }));
 
-    if (sender) {
-      query += ` AND from_user ILIKE $${paramIndex++}`;
-      params.push(`%${sender}%`);
-    }
-
-    if (receiver) {
-      query += ` AND to_user ILIKE $${paramIndex++}`;
-      params.push(`%${receiver}%`);
-    }
-
-    if (startDate) {
-      query += ` AND created_at >= $${paramIndex++}`;
-      params.push(startDate);
-    }
-
-    if (endDate) {
-      query += ` AND created_at <= $${paramIndex++}`;
-      params.push(endDate);
-    }
-
-    query += ` ORDER BY created_at DESC`;
-
-    const result = await pool.query(query, params);
-    res.json(result.rows);
+    res.json(result);
   } catch (error) {
     res.status(500).json({ error: "Internal Server Error" });
   }

@@ -1,6 +1,6 @@
 import { Request, Response } from "express";
 import { UserModel } from "../models/User";
-import { SignJWT } from "jose";
+const jose = require("jose");
 import bcrypt from "bcryptjs";
 
 export const register = async (req: Request, res: Response) => {
@@ -46,14 +46,21 @@ export const login = async (req: Request, res: Response) => {
         .status(400)
         .json({ success: false, message: "Email hoặc password sai" });
 
-    const secret = new TextEncoder().encode(process.env.JWT_SECRET);
-    const token = await new SignJWT({
-      id: user.id,
-      role: user.role,
-    })
-      .setProtectedHeader({ alg: "HS256" })
-      .setExpirationTime(process.env.JWT_EXPIRES_IN || "1h")
-      .sign(secret);
+    if (!process.env.JWT_SECRET) {
+      throw new Error("JWT_SECRET is not defined");
+    }
+
+    const token = jose.JWT.sign(
+      {
+        id: user.id,
+        role: user.role,
+      },
+      process.env.JWT_SECRET,
+      {
+        algorithm: "HS256",
+        expiresIn: process.env.JWT_EXPIRES_IN || "1h",
+      }
+    );
 
     res.json({
       success: true,

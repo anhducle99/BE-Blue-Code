@@ -1,27 +1,86 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
-generator client {
-  provider = "prisma-client-js"
-}
-
 model User {
-  id        Int       @id @default(autoincrement())
-  email     String    @unique
-  password  String
-  role      String    @default("USER") // "USER" | "ADMIN"
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  id                  Int           @id @default(autoincrement())
+  name                String
+  email               String        @unique
+  password            String?
+  phone               String?
+  role                String        @default("User")
+  departmentId        Int?          @map("department_id")
+  organizationId      Int?          @map("organization_id")
+  isDepartmentAccount Boolean       @default(false) @map("is_department_account")
+  isAdminView         Boolean       @default(false) @map("is_admin_view")
+  createdAt           DateTime      @default(now()) @map("created_at")
+  updatedAt           DateTime      @updatedAt @map("updated_at")
+  department          Department?   @relation(fields: [departmentId], references: [id])
+  organization        Organization? @relation(fields: [organizationId], references: [id])
+
+  @@map("users")
 }
 
 model Department {
-  id                 Int      @id @default(autoincrement())
-  name               String
-  phone              String?
-  group              String
-  isDepartmentAccount Boolean @default(false)
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  id          Int       @id @default(autoincrement())
+  name        String
+  phone       String?
+  alertGroup  String?   @map("alert_group")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  historyFrom History[] @relation("DepartmentFrom")
+  historyTo   History[] @relation("DepartmentTo")
+  users       User[]
+
+  @@map("departments")
+}
+
+model Organization {
+  id        Int      @id @default(autoincrement())
+  name      String
+  urlLogo   String?
+  createdAt DateTime @default(now()) @map("created_at")
+  users     User[]
+
+  @@map("organizations")
+}
+
+model History {
+  id               Int        @id @default(autoincrement())
+  departmentFromId Int        @map("department_from_id")
+  departmentToId   Int        @map("department_to_id")
+  content          String
+  image            String?
+  receiverName     String?    @map("receiver_name")
+  status           String?    @default("ko liên lạc")
+  sentAt           DateTime   @default(now()) @map("sent_at")
+  confirmedAt      DateTime?  @map("confirmed_at")
+  departmentFrom   Department @relation("DepartmentFrom", fields: [departmentFromId], references: [id])
+  departmentTo     Department @relation("DepartmentTo", fields: [departmentToId], references: [id])
+
+  @@map("history")
+}
+
+model CallLog {
+  id         Int       @id @default(autoincrement())
+  callId     String    @map("call_id")
+  fromUser   String    @map("from_user")
+  toUser     String    @map("to_user")
+  message    String?
+  imageUrl   String?   @map("image_url")
+  status     String    @default("pending") // "pending" | "accepted" | "rejected" | "unreachable"
+  createdAt  DateTime  @default(now()) @map("created_at")
+  acceptedAt DateTime? @map("accepted_at")
+  rejectedAt DateTime? @map("rejected_at")
+
+  @@index([callId])
+  @@index([fromUser])
+  @@index([toUser])
+  @@index([createdAt])
+  @@map("call_logs")
 }

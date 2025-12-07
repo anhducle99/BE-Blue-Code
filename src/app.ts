@@ -3,7 +3,7 @@ import dotenv from "dotenv";
 import cors from "cors";
 import http from "http";
 import { networkInterfaces } from "os";
-import { pool } from "./models/db";
+import { CallLogModel } from "./models/CallLog";
 import { Server as SocketServer } from "socket.io";
 import { onlineUsers, setIO } from "./socketStore";
 import callRoutes from "./routes/callRoutes";
@@ -29,7 +29,7 @@ app.use(
         return callback(null, true);
       }
 
-      if (/^http:\/\/192\.165\.15\.\d+:3000$/.test(origin)) {
+      if (/^http:\/\/192\.165\.15\.\d+(:\d+)?$/.test(origin)) {
         return callback(null, true);
       }
 
@@ -123,7 +123,8 @@ const io = new SocketServer(server, {
         return callback(null, true);
       }
 
-      if (/^http:\/\/192\.165\.15\.\d+:\d+$/.test(origin)) {
+      // Allow any port from 192.165.15.x IP range (with or without port)
+      if (/^http:\/\/192\.165\.15\.\d+(:\d+)?$/.test(origin)) {
         return callback(null, true);
       }
 
@@ -156,12 +157,7 @@ io.on("connection", (socket) => {
 
   socket.on("callAccepted", async ({ callId, toDept }) => {
     try {
-      await pool.query(
-        `UPDATE call_logs
-       SET status = 'accepted', accepted_at = NOW()
-       WHERE call_id = $1 AND to_user = $2`,
-        [callId, toDept]
-      );
+      await CallLogModel.updateStatus(callId, toDept, "accepted");
       io.emit("callStatusUpdate", { callId, toDept, status: "accepted" });
     } catch (err) {
       console.error("callAccepted error:", err);
@@ -170,12 +166,7 @@ io.on("connection", (socket) => {
 
   socket.on("callRejected", async ({ callId, toDept }) => {
     try {
-      await pool.query(
-        `UPDATE call_logs
-       SET status = 'rejected', rejected_at = NOW()
-       WHERE call_id = $1 AND to_user = $2`,
-        [callId, toDept]
-      );
+      await CallLogModel.updateStatus(callId, toDept, "rejected");
       io.emit("callStatusUpdate", { callId, toDept, status: "rejected" });
     } catch (err) {
       console.error("callRejected error:", err);
@@ -184,12 +175,7 @@ io.on("connection", (socket) => {
 
   socket.on("callTimeout", async ({ callId, toDept }) => {
     try {
-      await pool.query(
-        `UPDATE call_logs
-       SET status = 'unreachable', rejected_at = NOW()
-       WHERE call_id = $1 AND to_user = $2 AND status = 'pending'`,
-        [callId, toDept]
-      );
+      await CallLogModel.updateStatus(callId, toDept, "unreachable");
       io.emit("callStatusUpdate", { callId, toDept, status: "unreachable" });
     } catch (err) {
       console.error("callTimeout error:", err);

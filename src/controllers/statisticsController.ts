@@ -1,5 +1,6 @@
 import { Request, Response } from "express";
-import { pool } from "../models/db";
+import { prisma } from "../models/db.js";
+import { CallLogModel } from "../models/CallLog.js";
 
 function getUTCDateRangeVN(startStr: string, endStr: string) {
   let start = new Date(startStr);
@@ -39,28 +40,18 @@ export const getDepartmentStats = async (req: Request, res: Response) => {
       endDate as string
     );
 
-    const logsResult = await pool.query(
-      `
-      SELECT id, from_user, to_user, created_at
-      FROM call_logs
-      WHERE created_at BETWEEN $1::timestamptz AND $2::timestamptz
-      ORDER BY created_at ASC
-      `,
-      [start, end]
-    );
-    const logs = logsResult.rows;
+    const logs = await CallLogModel.findByDateRange(start, end);
 
-    const deptResult = await pool.query(
-      `SELECT id, name, alert_group FROM departments ORDER BY id`
-    );
-    const departments = deptResult.rows;
+    const departments = await prisma.department.findMany({
+      orderBy: { id: "asc" },
+    });
 
     const deptMap: Record<string, any> = {};
-    departments.forEach((d) => {
+    departments.forEach((d: any) => {
       deptMap[d.name.trim().toLowerCase()] = {
         id: d.id,
         name: d.name,
-        alert_group: d.alert_group,
+        alert_group: d.alertGroup,
         sent: 0,
         received: 0,
       };
@@ -95,27 +86,17 @@ export const getGroupStats = async (req: Request, res: Response) => {
       endDate as string
     );
 
-    const logsResult = await pool.query(
-      `
-      SELECT id, from_user, to_user, created_at
-      FROM call_logs
-      WHERE created_at BETWEEN $1::timestamptz AND $2::timestamptz
-      ORDER BY created_at ASC
-      `,
-      [start, end]
-    );
-    const logs = logsResult.rows;
+    const logs = await CallLogModel.findByDateRange(start, end);
 
-    const deptResult = await pool.query(
-      `SELECT id, name, alert_group FROM departments WHERE alert_group IS NOT NULL`
-    );
-    const departments = deptResult.rows;
+    const departments = await prisma.department.findMany({
+      where: { alertGroup: { not: null } },
+    });
 
     const deptMap: Record<string, any> = {};
-    departments.forEach((d) => {
+    departments.forEach((d: any) => {
       deptMap[d.name.trim().toLowerCase()] = {
         id: d.id,
-        alert_group: d.alert_group,
+        alert_group: d.alertGroup,
         sent: 0,
         received: 0,
       };
