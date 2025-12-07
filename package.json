@@ -5,10 +5,30 @@
   "license": "MIT",
   "main": "index.ts",
   "scripts": {
+    "build": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true});\" && tsc",
+    "start": "node dist/app.js",
+    "start:socket": "node dist/socketStore.js",
+    "start:all": "concurrently \"node dist/app.js\" \"node dist/socketStore.js\"",
     "reset-admin": "ts-node src/resetAdmin.ts",
     "dev:app": "ts-node src/app.ts",
     "dev:socket": "ts-node src/socketStore.ts",
-    "dev:all": "concurrently \"npm run dev:app\" \"npm run dev:socket\""
+    "dev:all": "concurrently \"npm run dev:app\" \"npm run dev:socket\"",
+    "dev:test": "copy .env.test .env && npm run dev:app",
+    "dev:prod": "copy .env.production .env && npm run dev:app",
+    "dev:test:all": "copy .env.test .env && npm run dev:all",
+    "dev:prod:all": "copy .env.production .env && npm run dev:all",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:studio": "prisma studio",
+    "prisma:studio:test": "copy .env.test .env && prisma studio",
+    "prisma:studio:prod": "copy .env.production .env && prisma studio",
+    "prisma:push": "prisma db push",
+    "prisma:seed": "ts-node src/seed.ts",
+    "prisma:deploy": "prisma migrate deploy",
+    "prisma:status": "prisma migrate status",
+    "prisma:reset": "prisma migrate reset",
+    "db:backup": "echo 'Run: pg_dump -U postgres -d bluecode > backup_$(date +%Y%m%d_%H%M%S).sql'",
+    "db:restore": "echo 'Run: psql -U postgres -d bluecode < backup_file.sql'"
   },
   "keywords": [],
   "author": "Ives van Hoorne",
@@ -23,6 +43,7 @@
     "@types/socket.io-client": "^1.4.36",
     "concurrently": "^9.2.1",
     "nodemon": "^3.1.10",
+    "prisma": "^6.15.0",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.2"
   },
@@ -34,11 +55,10 @@
     "dotenv": "^17.2.2",
     "express": "^4.21.2",
     "http": "^0.0.1-security",
-    "jose": "^6.1.0",
+    "jose": "^1.28.1",
     "jsonwebtoken": "^9.0.2",
     "pg": "^8.16.3",
     "socket.io": "^4.8.1",
-    "socket.io-client": "^4.8.1",
-    "uuid": "^13.0.0"
+    "socket.io-client": "^4.8.1"
   }
 }

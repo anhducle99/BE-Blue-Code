@@ -1,4 +1,4 @@
-import { pool } from "./db";
+import { prisma } from "./db.js";
 
 export interface IOrganization {
   id?: number;
@@ -9,26 +9,47 @@ export interface IOrganization {
 
 export class OrganizationModel {
   static async findAll(): Promise<IOrganization[]> {
-    const { rows } = await pool.query(
-      "SELECT id, name, created_at, urlLogo FROM organizations ORDER BY id"
-    );
-    return rows;
+    const organizations = await prisma.organization.findMany({
+      orderBy: { id: "asc" },
+    });
+
+    return organizations.map((o: any) => ({
+      id: o.id,
+      name: o.name,
+      created_at: o.createdAt,
+      urlLogo: o.urlLogo || undefined,
+    }));
   }
 
   static async findById(id: number): Promise<IOrganization | null> {
-    const { rows } = await pool.query(
-      "SELECT id, name, created_at, urlLogo FROM organizations WHERE id=$1",
-      [id]
-    );
-    return rows[0] || null;
+    const organization = await prisma.organization.findUnique({
+      where: { id },
+    });
+
+    if (!organization) return null;
+
+    return {
+      id: organization.id,
+      name: organization.name,
+      created_at: organization.createdAt,
+      urlLogo: organization.urlLogo || undefined,
+    };
   }
 
   static async create(name: string, urlLogo?: string): Promise<IOrganization> {
-    const { rows } = await pool.query(
-      "INSERT INTO organizations (name, created_at, urlLogo) VALUES ($1, NOW(), $2) RETURNING id, name, created_at, urlLogo",
-      [name, urlLogo || null]
-    );
-    return rows[0];
+    const created = await prisma.organization.create({
+      data: {
+        name,
+        urlLogo: urlLogo || null,
+      },
+    });
+
+    return {
+      id: created.id,
+      name: created.name,
+      created_at: created.createdAt,
+      urlLogo: created.urlLogo || undefined,
+    };
   }
 
   static async update(
@@ -36,14 +57,25 @@ export class OrganizationModel {
     name: string,
     urlLogo?: string
   ): Promise<IOrganization | null> {
-    const { rows } = await pool.query(
-      "UPDATE organizations SET name=$1, urlLogo=$2 WHERE id=$3 RETURNING id, name, created_at, urlLogo",
-      [name, urlLogo || null, id]
-    );
-    return rows[0] || null;
+    const updated = await prisma.organization.update({
+      where: { id },
+      data: {
+        name,
+        urlLogo: urlLogo || null,
+      },
+    });
+
+    return {
+      id: updated.id,
+      name: updated.name,
+      created_at: updated.createdAt,
+      urlLogo: updated.urlLogo || undefined,
+    };
   }
 
   static async delete(id: number): Promise<void> {
-    await pool.query("DELETE FROM organizations WHERE id=$1", [id]);
+    await prisma.organization.delete({
+      where: { id },
+    });
   }
 }

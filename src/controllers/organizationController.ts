@@ -1,5 +1,5 @@
 import { Request, Response } from "express";
-import { OrganizationModel } from "../models/Organization";
+import { OrganizationModel } from "../models/Organization.js";
 
 export const getOrganizations = async (req: Request, res: Response) => {
   const orgs = await OrganizationModel.findAll();

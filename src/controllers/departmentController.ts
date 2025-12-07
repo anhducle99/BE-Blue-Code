@@ -1,5 +1,5 @@
 import { Request, Response } from "express";
-import { DepartmentModel, IDepartment } from "../models/Department";
+import { DepartmentModel, IDepartment } from "../models/Department.js";
 
 export const getDepartments = async (req: Request, res: Response) => {
   const departments = await DepartmentModel.findAll();

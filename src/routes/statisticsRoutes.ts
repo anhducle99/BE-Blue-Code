@@ -2,7 +2,7 @@ import { Router } from "express";
 import {
   getDepartmentStats,
   getGroupStats,
-} from "../controllers/statisticsController";
+} from "../controllers/statisticsController.js";
 
 const router = Router();
 

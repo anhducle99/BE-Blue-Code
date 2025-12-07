@@ -1,4 +1,4 @@
-import { pool } from "./db";
+import { prisma } from "./db.js";
 
 export interface IHistory {
   id?: number;
@@ -23,52 +23,86 @@ export class HistoryModel {
       status,
     } = history;
 
-    const { rows } = await pool.query(
-      `INSERT INTO history 
-        (department_from_id, department_to_id, content, image, receiver_name, status, sent_at)
-       VALUES ($1,$2,$3,$4,$5,$6,NOW())
-       RETURNING *`,
-      [
-        department_from_id,
-        department_to_id,
+    const created = await prisma.history.create({
+      data: {
+        departmentFromId: department_from_id,
+        departmentToId: department_to_id,
         content,
         image,
-        receiver_name,
-        status,
-      ]
-    );
+        receiverName: receiver_name,
+        status: status || "ko liên lạc",
+      },
+    });
 
-    return rows[0];
+    return {
+      id: created.id,
+      department_from_id: created.departmentFromId,
+      department_to_id: created.departmentToId,
+      content: created.content,
+      image: created.image || undefined,
+      receiver_name: created.receiverName || undefined,
+      status: created.status as IHistory["status"],
+      sent_at: created.sentAt,
+      confirmed_at: created.confirmedAt || undefined,
+    };
   }
 
   static async findAll(
     startDate?: string,
     endDate?: string
   ): Promise<IHistory[]> {
-    let query = "SELECT * FROM history";
-    const params: any[] = [];
+    const where: any = {};
 
     if (startDate && endDate) {
-      query += " WHERE sent_at BETWEEN $1 AND $2";
-      params.push(startDate, endDate);
+      where.sentAt = {
+        gte: new Date(startDate),
+        lte: new Date(endDate),
+      };
     }
 
-    query += " ORDER BY sent_at DESC";
-    const { rows } = await pool.query(query, params);
-    return rows;
+    const histories = await prisma.history.findMany({
+      where,
+      orderBy: { sentAt: "desc" },
+    });
+
+    return histories.map((h: any) => ({
+      id: h.id,
+      department_from_id: h.departmentFromId,
+      department_to_id: h.departmentToId,
+      content: h.content,
+      image: h.image || undefined,
+      receiver_name: h.receiverName || undefined,
+      status: h.status as IHistory["status"],
+      sent_at: h.sentAt,
+      confirmed_at: h.confirmedAt || undefined,
+    }));
   }
 
   static async findByDateRange(
     startDate: string,
     endDate: string
   ): Promise<IHistory[]> {
-    const { rows } = await pool.query(
-      `SELECT * FROM history
-       WHERE sent_at BETWEEN $1 AND $2
-       ORDER BY sent_at DESC`,
-      [startDate, endDate]
-    );
-    return rows;
+    const histories = await prisma.history.findMany({
+      where: {
+        sentAt: {
+          gte: new Date(startDate),
+          lte: new Date(endDate),
+        },
+      },
+      orderBy: { sentAt: "desc" },
+    });
+
+    return histories.map((h: any) => ({
+      id: h.id,
+      department_from_id: h.departmentFromId,
+      department_to_id: h.departmentToId,
+      content: h.content,
+      image: h.image || undefined,
+      receiver_name: h.receiverName || undefined,
+      status: h.status as IHistory["status"],
+      sent_at: h.sentAt,
+      confirmed_at: h.confirmedAt || undefined,
+    }));
   }
 
   static async confirm(
@@ -76,17 +110,30 @@ export class HistoryModel {
     confirmed_at: Date,
     status: IHistory["status"]
   ): Promise<IHistory | null> {
-    const { rows } = await pool.query(
-      `UPDATE history
-       SET confirmed_at = $1, status = $2
-       WHERE id = $3
-       RETURNING *`,
-      [confirmed_at, status, id]
-    );
-    return rows[0] || null;
+    const updated = await prisma.history.update({
+      where: { id },
+      data: {
+        confirmedAt: confirmed_at,
+        status,
+      },
+    });
+
+    return {
+      id: updated.id,
+      department_from_id: updated.departmentFromId,
+      department_to_id: updated.departmentToId,
+      content: updated.content,
+      image: updated.image || undefined,
+      receiver_name: updated.receiverName || undefined,
+      status: updated.status as IHistory["status"],
+      sent_at: updated.sentAt,
+      confirmed_at: updated.confirmedAt || undefined,
+    };
   }
 
   static async delete(id: number): Promise<void> {
-    await pool.query(`DELETE FROM history WHERE id = $1`, [id]);
+    await prisma.history.delete({
+      where: { id },
+    });
   }
 }
