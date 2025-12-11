@@ -1,4 +1,4 @@
-import { prisma } from "./models/db.js";
+import { prisma } from "./models/db";
 import bcrypt from "bcryptjs";
 
 async function resetAdmin() {

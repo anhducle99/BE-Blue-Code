@@ -1,6 +1,6 @@
-import { UserModel } from "./models/User.js";
-import { DepartmentModel } from "./models/Department.js";
-import { prisma } from "./models/db.js";
+import { UserModel } from "./models/User";
+import { DepartmentModel } from "./models/Department";
+import { prisma } from "./models/db";
 import bcrypt from "bcryptjs";
 
 async function seed() {

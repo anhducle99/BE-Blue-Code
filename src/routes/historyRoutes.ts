@@ -1,5 +1,5 @@
 import express from "express";
-import { getCallHistory } from "../controllers/historyController.js";
+import { getCallHistory } from "../controllers/historyController";
 
 const router = express.Router();
 router.get("/", getCallHistory);

@@ -1,6 +1,6 @@
 import { Router } from "express";
-import { CallLogModel } from "../models/CallLog.js";
-import { getIO, onlineUsers } from "../socketStore.js";
+import { CallLogModel } from "../models/CallLog";
+import { getIO, onlineUsers } from "../socketStore";
 import { randomUUID } from "crypto";
 
 const router = Router();
