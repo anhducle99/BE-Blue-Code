@@ -1,7 +1,7 @@
 import { Request, Response } from "express";
 import { UserModel } from "../models/User";
 const jose = require("jose");
-import bcrypt from "bcryptjs";
+import bcrypt from "bcrypt";
 
 export const register = async (req: Request, res: Response) => {
   const { name, email, password, role } = req.body;

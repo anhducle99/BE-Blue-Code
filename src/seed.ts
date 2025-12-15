@@ -1,7 +1,7 @@
 import { UserModel } from "./models/User";
 import { DepartmentModel } from "./models/Department";
 import { prisma } from "./models/db";
-import bcrypt from "bcryptjs";
+import bcrypt from "bcrypt";
 
 async function seed() {
   try {

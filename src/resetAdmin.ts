@@ -1,5 +1,5 @@
 import { prisma } from "./models/db";
-import bcrypt from "bcryptjs";
+import bcrypt from "bcrypt";
 
 async function resetAdmin() {
   const email = "admin@example.com";

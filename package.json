@@ -34,7 +34,6 @@
   "author": "Ives van Hoorne",
   "devDependencies": {
     "@types/bcrypt": "^6.0.0",
-    "@types/bcryptjs": "^2.4.6",
     "@types/cors": "2.8.19",
     "@types/express": "^4.17.23",
     "@types/jsonwebtoken": "^9.0.10",
@@ -50,7 +49,6 @@
   "dependencies": {
     "@prisma/client": "6.15.0",
     "bcrypt": "6.0.0",
-    "bcryptjs": "^3.0.2",
     "cors": "^2.8.5",
     "dotenv": "^17.2.2",
     "express": "^4.21.2",
