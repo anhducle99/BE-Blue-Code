@@ -1,6 +1,6 @@
 import { Request, Response } from "express";
-import { prisma } from "../models/db.js";
-import { CallLogModel } from "../models/CallLog.js";
+import { prisma } from "../models/db";
+import { CallLogModel } from "../models/CallLog";
 
 function getUTCDateRangeVN(startStr: string, endStr: string) {
   let start = new Date(startStr);

@@ -1,5 +1,5 @@
 import { Request, Response } from "express";
-import { CallLogModel } from "../models/CallLog.js";
+import { CallLogModel } from "../models/CallLog";
 
 export const getCallHistory = async (req: Request, res: Response) => {
   try {

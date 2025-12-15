@@ -1,4 +1,4 @@
-import { prisma } from "./db.js";
+import { prisma } from "./db";
 
 export interface IDepartment {
   id?: number;

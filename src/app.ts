@@ -115,10 +115,12 @@ const server = http.createServer(app);
 const io = new SocketServer(server, {
   cors: {
     origin: (origin, callback) => {
+      // Allow requests without origin (e.g., mobile apps, Postman, WebSocket)
       if (!origin) {
         return callback(null, true);
       }
 
+      // Allow localhost and 127.0.0.1
       if (origin.includes("localhost") || origin.includes("127.0.0.1")) {
         return callback(null, true);
       }
@@ -128,11 +130,17 @@ const io = new SocketServer(server, {
         return callback(null, true);
       }
 
+      // Allow WebSocket connections from 192.165.15.x IP range
+      if (/^ws:\/\/192\.165\.15\.\d+(:\d+)?$/.test(origin)) {
+        return callback(null, true);
+      }
+
       const isDevelopment = process.env.NODE_ENV !== "production";
       if (isDevelopment) {
         return callback(null, true);
       }
 
+      console.warn(`CORS blocked origin: ${origin}`);
       callback(new Error("Not allowed by CORS"));
     },
     credentials: true,
@@ -140,10 +148,15 @@ const io = new SocketServer(server, {
   },
   transports: ["websocket", "polling"],
   allowEIO3: true,
+  path: "/socket.io/",
+  pingTimeout: 60000,
+  pingInterval: 25000,
 });
 setIO(io);
 
 io.on("connection", (socket) => {
+  console.log(`Socket.IO client connected: ${socket.id} from ${socket.handshake.address}`);
+  
   socket.on("register", (data) => {
     const { name, department_id, department_name } = data;
     const key = `${department_name}_${department_name}`;
@@ -182,19 +195,19 @@ io.on("connection", (socket) => {
     }
   });
 
-  socket.on("disconnect", () => {
+  socket.on("disconnect", (reason) => {
+    console.log(`Socket.IO client disconnected: ${socket.id}, reason: ${reason}`);
     for (const [key, value] of onlineUsers.entries()) {
       if (value.socketId === socket.id) {
         onlineUsers.delete(key);
       }
     }
   });
+
+  socket.on("error", (error) => {
+    console.error(`Socket.IO error for ${socket.id}:`, error);
+  });
 });
 
-server.listen(Number(PORT), "0.0.0.0", () => {
-  console.log(`REST API + Socket.IO running on http://localhost:${PORT}`);
-  console.log(`Also accessible at http://${networkIP}:${PORT}`);
-  console.log(`WebSocket available at ws://${networkIP}:${PORT}/socket.io/`);
-});
-
+export { server, io };
 export default app;

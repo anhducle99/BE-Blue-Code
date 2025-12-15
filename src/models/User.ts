@@ -1,5 +1,5 @@
-import { prisma } from "./db.js";
-import bcrypt from "bcryptjs";
+import { prisma } from "./db";
+import bcrypt from "bcrypt";
 
 export type Role = "Admin" | "User";
 
