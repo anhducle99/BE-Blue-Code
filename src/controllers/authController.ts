@@ -22,12 +22,10 @@ export const register = async (req: Request, res: Response) => {
       });
     }
 
-    const hashedPassword = await bcrypt.hash(password, 10);
-
     const user = await UserModel.create({
       name,
       email,
-      password: hashedPassword,
+      password,
       role,
     });
 
