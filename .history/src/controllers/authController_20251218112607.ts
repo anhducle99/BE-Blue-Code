@@ -3,6 +3,10 @@ import bcrypt from "bcrypt";
 import { UserModel } from "../models/User";
 import { SignJWT } from "jose";
 
+/**
+ * REGISTER
+ * - Hash password trước khi lưu DB
+ */
 export const register = async (req: Request, res: Response) => {
   try {
     const { name, email, password, role } = req.body;
@@ -22,6 +26,7 @@ export const register = async (req: Request, res: Response) => {
       });
     }
 
+    // ✅ HASH PASSWORD (QUAN TRỌNG NHẤT)
     const hashedPassword = await bcrypt.hash(password, 10);
 
     const user = await UserModel.create({
@@ -44,6 +49,11 @@ export const register = async (req: Request, res: Response) => {
   }
 };
 
+/**
+ * LOGIN
+ * - So sánh bcrypt đúng cách
+ * - Trả JWT
+ */
 export const login = async (req: Request, res: Response) => {
   try {
     const { email, password } = req.body;
@@ -64,6 +74,7 @@ export const login = async (req: Request, res: Response) => {
       });
     }
 
+    // ✅ SO SÁNH PASSWORD ĐÚNG
     const isMatch = await bcrypt.compare(password, user.password);
 
     if (!isMatch) {
@@ -77,7 +88,8 @@ export const login = async (req: Request, res: Response) => {
       throw new Error("JWT_SECRET is not defined");
     }
 
-    const token = await new SignJWT({
+    // ✅ TẠO JWT
+    const token = await new jose.SignJWT({
       id: user.id,
       role: user.role,
     })

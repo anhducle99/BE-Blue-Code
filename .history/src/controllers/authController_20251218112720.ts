@@ -44,6 +44,11 @@ export const register = async (req: Request, res: Response) => {
   }
 };
 
+/**
+ * LOGIN
+ * - So sánh bcrypt đúng cách
+ * - Trả JWT
+ */
 export const login = async (req: Request, res: Response) => {
   try {
     const { email, password } = req.body;
@@ -64,6 +69,7 @@ export const login = async (req: Request, res: Response) => {
       });
     }
 
+    // ✅ SO SÁNH PASSWORD ĐÚNG
     const isMatch = await bcrypt.compare(password, user.password);
 
     if (!isMatch) {
@@ -77,6 +83,7 @@ export const login = async (req: Request, res: Response) => {
       throw new Error("JWT_SECRET is not defined");
     }
 
+    // ✅ TẠO JWT
     const token = await new SignJWT({
       id: user.id,
       role: user.role,
