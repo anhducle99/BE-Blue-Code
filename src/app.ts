@@ -1,5 +1,7 @@
-import express from "express";
 import dotenv from "dotenv";
+dotenv.config();
+
+import express from "express";
 import cors from "cors";
 import http from "http";
 import { networkInterfaces } from "os";
@@ -13,8 +15,6 @@ import organizationRoutes from "./routes/organizationRoutes";
 import historyRoutes from "./routes/historyRoutes";
 import userRoutes from "./routes/userRoutes";
 import statisticsRoutes from "./routes/statisticsRoutes";
-
-dotenv.config();
 const app = express();
 
 app.use(express.json());
@@ -115,22 +115,18 @@ const server = http.createServer(app);
 const io = new SocketServer(server, {
   cors: {
     origin: (origin, callback) => {
-      // Allow requests without origin (e.g., mobile apps, Postman, WebSocket)
       if (!origin) {
         return callback(null, true);
       }
 
-      // Allow localhost and 127.0.0.1
       if (origin.includes("localhost") || origin.includes("127.0.0.1")) {
         return callback(null, true);
       }
 
-      // Allow any port from 192.165.15.x IP range (with or without port)
       if (/^http:\/\/192\.165\.15\.\d+(:\d+)?$/.test(origin)) {
         return callback(null, true);
       }
 
-      // Allow WebSocket connections from 192.165.15.x IP range
       if (/^ws:\/\/192\.165\.15\.\d+(:\d+)?$/.test(origin)) {
         return callback(null, true);
       }
@@ -155,8 +151,10 @@ const io = new SocketServer(server, {
 setIO(io);
 
 io.on("connection", (socket) => {
-  console.log(`Socket.IO client connected: ${socket.id} from ${socket.handshake.address}`);
-  
+  console.log(
+    `Socket.IO client connected: ${socket.id} from ${socket.handshake.address}`
+  );
+
   socket.on("register", (data) => {
     const { name, department_id, department_name } = data;
     const key = `${department_name}_${department_name}`;
@@ -196,7 +194,9 @@ io.on("connection", (socket) => {
   });
 
   socket.on("disconnect", (reason) => {
-    console.log(`Socket.IO client disconnected: ${socket.id}, reason: ${reason}`);
+    console.log(
+      `Socket.IO client disconnected: ${socket.id}, reason: ${reason}`
+    );
     for (const [key, value] of onlineUsers.entries()) {
       if (value.socketId === socket.id) {
         onlineUsers.delete(key);
