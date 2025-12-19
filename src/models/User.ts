@@ -1,7 +1,7 @@
 import { prisma } from "./db";
 import bcrypt from "bcrypt";
 
-export type Role = "Admin" | "User";
+export type Role = "SuperAdmin" | "Admin" | "User";
 
 export interface IUser {
   id?: number;
