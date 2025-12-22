@@ -18,37 +18,21 @@ import statisticsRoutes from "./routes/statisticsRoutes";
 const app = express();
 
 app.use(express.json());
+
 app.use(
   cors({
-    origin: (origin, callback) => {
-      if (!origin) {
-        return callback(null, true);
-      }
-
-      if (origin.includes("localhost") || origin.includes("127.0.0.1")) {
-        return callback(null, true);
-      }
-
-      if (/^http:\/\/192\.165\.15\.\d+(:\d+)?$/.test(origin)) {
-        return callback(null, true);
-      }
-
-      const isDevelopment = process.env.NODE_ENV !== "production";
-      if (isDevelopment) {
-        return callback(null, true);
-      }
-
-      console.warn(`CORS blocked origin: ${origin}`);
-      callback(new Error("Not allowed by CORS"));
-    },
+    origin: [
+      "http://192.165.15.251",
+      "http://localhost:3000",
+      "http://127.0.0.1:3000",
+    ],
     credentials: true,
-    methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
-    exposedHeaders: ["Content-Type", "Authorization"],
-    preflightContinue: false,
-    optionsSuccessStatus: 204,
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
+
+app.options("*", cors());
 
 app.options("/api/info", cors());
 app.get("/api/info", cors({ origin: true }), (req, res) => {
