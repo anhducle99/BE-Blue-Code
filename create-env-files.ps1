@@ -3,7 +3,7 @@
 Write-Host "Creating .env files..."
 
 # Create .env.test
-$envTest = "DATABASE_URL=`"postgresql://postgres:123456@localhost:5432/postgres?schema=public`"`nDB_HOST=localhost`nDB_USER=postgres`nDB_PASSWORD=123456`nDB_NAME=postgres`nDB_PORT=5432`nJWT_SECRET=your_jwt_secret`nJWT_EXPIRES_IN=1d`nPORT=5000`nNODE_ENV=development"
+$envTest = "DATABASE_URL=`"postgresql://postgres:123456@localhost:5432/bluecode?schema=public`"`nDB_HOST=localhost`nDB_USER=postgres`nDB_PASSWORD=123456`nDB_NAME=bluecode`nDB_PORT=5432`nJWT_SECRET=BlueCode2024TestSecretKey!@#`nJWT_EXPIRES_IN=24h`nPORT=5000`nNODE_ENV=test"
 
 $envTest | Out-File -FilePath ".env.test" -Encoding ASCII
 
