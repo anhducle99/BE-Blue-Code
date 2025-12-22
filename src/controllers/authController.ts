@@ -53,7 +53,7 @@ export const login = async (req: Request, res: Response) => {
       });
     }
 
-    const user = await UserModel.findByEmail(email);
+    const user = await UserModel.findByEmail(email, true);
 
     if (!user || !user.password) {
       return res.status(400).json({
@@ -83,11 +83,35 @@ export const login = async (req: Request, res: Response) => {
       .setExpirationTime(process.env.JWT_EXPIRES_IN || "1h")
       .sign(new TextEncoder().encode(process.env.JWT_SECRET));
 
+    const userForResponse = await UserModel.findByEmail(email, false);
+    if (!userForResponse) {
+      return res.status(500).json({
+        success: false,
+        message: "Lỗi khi lấy thông tin user",
+      });
+    }
+
+    const userResponse = {
+      id: userForResponse.id,
+      name: userForResponse.name,
+      email: userForResponse.email,
+      phone: userForResponse.phone,
+      role: userForResponse.role,
+      department_id: userForResponse.department_id,
+      department_name: userForResponse.department_name,
+      organization_id: userForResponse.organization_id,
+      organization_name: userForResponse.organization_name,
+      is_department_account: userForResponse.is_department_account,
+      is_admin_view: userForResponse.is_admin_view,
+      created_at: userForResponse.created_at,
+      updated_at: userForResponse.updated_at,
+    };
+
     return res.json({
       success: true,
       data: {
         token,
-        user,
+        user: userResponse,
       },
       message: "Đăng nhập thành công",
     });

@@ -8,16 +8,44 @@ export interface IUser {
   name: string;
   email: string;
   password?: string;
-  phone?: string;
+  phone?: string | null;
   role?: Role;
-  department_id?: number;
-  organization_id?: number;
-  department_name?: string;
-  organization_name?: string;
+  department_id?: number | null;
+  organization_id?: number | null;
+  department_name?: string | null;
+  organization_name?: string | null;
   is_department_account?: boolean;
   is_admin_view?: boolean;
   created_at?: Date;
   updated_at?: Date;
+}
+
+/**
+ * Helper function to sanitize user object - removes password and ensures all fields are present
+ */
+function sanitizeUser(user: any, includePassword: boolean = false): IUser {
+  const sanitized: IUser = {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    phone: user.phone ?? null,
+    role: user.role as Role,
+    department_id: user.departmentId ?? null,
+    organization_id: user.organizationId ?? null,
+    department_name: user.department?.name ?? null,
+    organization_name: user.organization?.name ?? null,
+    is_department_account: user.isDepartmentAccount ?? false,
+    is_admin_view: user.isAdminView ?? false,
+    created_at: user.createdAt,
+    updated_at: user.updatedAt,
+  };
+
+  // Only include password if explicitly requested (for internal use like login verification)
+  if (includePassword && user.password) {
+    sanitized.password = user.password;
+  }
+
+  return sanitized;
 }
 
 export class UserModel {
@@ -30,22 +58,7 @@ export class UserModel {
       orderBy: { id: "asc" },
     });
 
-    return users.map((u: any) => ({
-      id: u.id,
-      name: u.name,
-      email: u.email,
-      password: u.password || undefined,
-      phone: u.phone || undefined,
-      role: u.role as Role,
-      department_id: u.departmentId || undefined,
-      organization_id: u.organizationId || undefined,
-      department_name: u.department?.name,
-      organization_name: u.organization?.name,
-      is_department_account: u.isDepartmentAccount,
-      is_admin_view: u.isAdminView,
-      created_at: u.createdAt,
-      updated_at: u.updatedAt,
-    }));
+    return users.map((u: any) => sanitizeUser(u, false));
   }
 
   static async findById(id: number): Promise<IUser | null> {
@@ -59,25 +72,13 @@ export class UserModel {
 
     if (!user) return null;
 
-    return {
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      password: user.password || undefined,
-      phone: user.phone || undefined,
-      role: user.role as Role,
-      department_id: user.departmentId || undefined,
-      organization_id: user.organizationId || undefined,
-      department_name: user.department?.name,
-      organization_name: user.organization?.name,
-      is_department_account: user.isDepartmentAccount,
-      is_admin_view: user.isAdminView,
-      created_at: user.createdAt,
-      updated_at: user.updatedAt,
-    };
+    return sanitizeUser(user, false);
   }
 
-  static async findByEmail(email: string): Promise<IUser | null> {
+  static async findByEmail(
+    email: string,
+    includePassword: boolean = false
+  ): Promise<IUser | null> {
     const user = await prisma.user.findUnique({
       where: { email },
       include: {
@@ -88,22 +89,7 @@ export class UserModel {
 
     if (!user) return null;
 
-    return {
-      id: user.id,
-      name: user.name,
-      email: user.email,
-      password: user.password || undefined,
-      phone: user.phone || undefined,
-      role: user.role as Role,
-      department_id: user.departmentId || undefined,
-      organization_id: user.organizationId || undefined,
-      department_name: user.department?.name,
-      organization_name: user.organization?.name,
-      is_department_account: user.isDepartmentAccount,
-      is_admin_view: user.isAdminView,
-      created_at: user.createdAt,
-      updated_at: user.updatedAt,
-    };
+    return sanitizeUser(user, includePassword);
   }
 
   static async create(user: IUser): Promise<IUser> {
@@ -139,22 +125,7 @@ export class UserModel {
       },
     });
 
-    return {
-      id: created.id,
-      name: created.name,
-      email: created.email,
-      password: created.password || undefined,
-      phone: created.phone || undefined,
-      role: created.role as Role,
-      department_id: created.departmentId || undefined,
-      organization_id: created.organizationId || undefined,
-      department_name: created.department?.name,
-      organization_name: created.organization?.name,
-      is_department_account: created.isDepartmentAccount,
-      is_admin_view: created.isAdminView,
-      created_at: created.createdAt,
-      updated_at: created.updatedAt,
-    };
+    return sanitizeUser(created, false);
   }
 
   static async update(id: number, user: Partial<IUser>): Promise<IUser | null> {
@@ -186,22 +157,7 @@ export class UserModel {
       },
     });
 
-    return {
-      id: updated.id,
-      name: updated.name,
-      email: updated.email,
-      password: updated.password || undefined,
-      phone: updated.phone || undefined,
-      role: updated.role as Role,
-      department_id: updated.departmentId || undefined,
-      organization_id: updated.organizationId || undefined,
-      department_name: updated.department?.name,
-      organization_name: updated.organization?.name,
-      is_department_account: updated.isDepartmentAccount,
-      is_admin_view: updated.isAdminView,
-      created_at: updated.createdAt,
-      updated_at: updated.updatedAt,
-    };
+    return sanitizeUser(updated, false);
   }
 
   static async delete(id: number): Promise<void> {
