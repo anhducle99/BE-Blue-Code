@@ -16,6 +16,7 @@ export interface IUser {
   organization_name?: string | null;
   is_department_account?: boolean;
   is_admin_view?: boolean;
+  is_floor_account?: boolean;
   created_at?: Date;
   updated_at?: Date;
 }
@@ -36,11 +37,11 @@ function sanitizeUser(user: any, includePassword: boolean = false): IUser {
     organization_name: user.organization?.name ?? null,
     is_department_account: user.isDepartmentAccount ?? false,
     is_admin_view: user.isAdminView ?? false,
+    is_floor_account: user.isFloorAccount ?? false,
     created_at: user.createdAt,
     updated_at: user.updatedAt,
   };
 
-  // Only include password if explicitly requested (for internal use like login verification)
   if (includePassword && user.password) {
     sanitized.password = user.password;
   }
@@ -103,6 +104,7 @@ export class UserModel {
       organization_id,
       is_department_account = false,
       is_admin_view = false,
+      is_floor_account = false,
     } = user;
 
     const hashedPassword = password ? await bcrypt.hash(password, 10) : null;
@@ -118,6 +120,7 @@ export class UserModel {
         organizationId: organization_id,
         isDepartmentAccount: is_department_account,
         isAdminView: is_admin_view,
+        ...(is_floor_account !== undefined && { isFloorAccount: is_floor_account }),
       },
       include: {
         department: { select: { name: true } },
@@ -143,6 +146,8 @@ export class UserModel {
       updateData.isDepartmentAccount = user.is_department_account;
     if (user.is_admin_view !== undefined)
       updateData.isAdminView = user.is_admin_view;
+    if (user.is_floor_account !== undefined)
+      updateData.isFloorAccount = user.is_floor_account;
 
     if (user.password) {
       updateData.password = await bcrypt.hash(user.password, 10);

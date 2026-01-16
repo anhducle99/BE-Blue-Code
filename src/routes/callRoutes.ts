@@ -9,12 +9,17 @@ router.post("/", async (req, res) => {
   try {
     const { targetKeys, message, fromDept, image_url } = req.body;
     const io = getIO();
+    if (!io) {
+      return res.status(500).json({ success: false, message: "Socket.IO not initialized" });
+    }
+
     const callId = randomUUID();
+    const createdLogs: any[] = [];
 
     for (const key of targetKeys) {
       const targetUser = onlineUsers.get(key);
 
-      await CallLogModel.create({
+      const callLog = await CallLogModel.create({
         call_id: callId,
         from_user: fromDept,
         to_user: key.split("_")[0],
@@ -22,6 +27,8 @@ router.post("/", async (req, res) => {
         image_url: image_url || undefined,
         status: "pending",
       });
+
+      createdLogs.push(callLog);
 
       if (targetUser) {
         io.to(targetUser.socketId).emit("incomingCall", {
@@ -32,14 +39,29 @@ router.post("/", async (req, res) => {
           image_url,
         });
       } else {
-        console.log(`${key} not online`);
       }
     }
 
-    res.json({ success: true, callId });
+    createdLogs.forEach((callLog) => {
+      io.emit("callLogCreated", {
+        id: callLog.id,
+        call_id: callLog.call_id,
+        from_user: callLog.from_user,
+        to_user: callLog.to_user,
+        message: callLog.message,
+        image_url: callLog.image_url,
+        status: callLog.status,
+        created_at: callLog.created_at,
+        accepted_at: callLog.accepted_at,
+        rejected_at: callLog.rejected_at,
+      });
+    });
+
+
+    return res.json({ success: true, callId });
   } catch (err) {
     console.error("Error in POST /api/call:", err);
-    res.status(500).json({ success: false, message: "Server error" });
+    return res.status(500).json({ success: false, message: "Server error" });
   }
 });
 
