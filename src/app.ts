@@ -139,10 +139,6 @@ const io = new SocketServer(server, {
 setIO(io);
 
 io.on("connection", (socket) => {
-  console.log(
-    `Socket.IO client connected: ${socket.id} from ${socket.handshake.address}`
-  );
-
   socket.on("register", (data) => {
     const { name, department_id, department_name } = data;
     const key = `${department_name}_${department_name}`;
@@ -156,8 +152,22 @@ io.on("connection", (socket) => {
 
   socket.on("callAccepted", async ({ callId, toDept }) => {
     try {
-      await CallLogModel.updateStatus(callId, toDept, "accepted");
-      io.emit("callStatusUpdate", { callId, toDept, status: "accepted" });
+      const updatedLog = await CallLogModel.updateStatus(callId, toDept, "accepted");
+      if (updatedLog) {
+        io.emit("callLogUpdated", {
+          id: updatedLog.id,
+          call_id: updatedLog.call_id,
+          from_user: updatedLog.from_user,
+          to_user: updatedLog.to_user,
+          message: updatedLog.message,
+          image_url: updatedLog.image_url,
+          status: updatedLog.status,
+          created_at: updatedLog.created_at,
+          accepted_at: updatedLog.accepted_at,
+          rejected_at: updatedLog.rejected_at,
+        });
+        io.emit("callStatusUpdate", { callId, toDept, status: "accepted" });
+      }
     } catch (err) {
       console.error("callAccepted error:", err);
     }
@@ -165,8 +175,22 @@ io.on("connection", (socket) => {
 
   socket.on("callRejected", async ({ callId, toDept }) => {
     try {
-      await CallLogModel.updateStatus(callId, toDept, "rejected");
-      io.emit("callStatusUpdate", { callId, toDept, status: "rejected" });
+      const updatedLog = await CallLogModel.updateStatus(callId, toDept, "rejected");
+      if (updatedLog) {
+        io.emit("callLogUpdated", {
+          id: updatedLog.id,
+          call_id: updatedLog.call_id,
+          from_user: updatedLog.from_user,
+          to_user: updatedLog.to_user,
+          message: updatedLog.message,
+          image_url: updatedLog.image_url,
+          status: updatedLog.status,
+          created_at: updatedLog.created_at,
+          accepted_at: updatedLog.accepted_at,
+          rejected_at: updatedLog.rejected_at,
+        });
+        io.emit("callStatusUpdate", { callId, toDept, status: "rejected" });
+      }
     } catch (err) {
       console.error("callRejected error:", err);
     }
@@ -174,17 +198,28 @@ io.on("connection", (socket) => {
 
   socket.on("callTimeout", async ({ callId, toDept }) => {
     try {
-      await CallLogModel.updateStatus(callId, toDept, "unreachable");
-      io.emit("callStatusUpdate", { callId, toDept, status: "unreachable" });
+      const updatedLog = await CallLogModel.updateStatus(callId, toDept, "unreachable");
+      if (updatedLog) {
+        io.emit("callLogUpdated", {
+          id: updatedLog.id,
+          call_id: updatedLog.call_id,
+          from_user: updatedLog.from_user,
+          to_user: updatedLog.to_user,
+          message: updatedLog.message,
+          image_url: updatedLog.image_url,
+          status: updatedLog.status,
+          created_at: updatedLog.created_at,
+          accepted_at: updatedLog.accepted_at,
+          rejected_at: updatedLog.rejected_at,
+        });
+        io.emit("callStatusUpdate", { callId, toDept, status: "unreachable" });
+      }
     } catch (err) {
       console.error("callTimeout error:", err);
     }
   });
 
   socket.on("disconnect", (reason) => {
-    console.log(
-      `Socket.IO client disconnected: ${socket.id}, reason: ${reason}`
-    );
     for (const [key, value] of onlineUsers.entries()) {
       if (value.socketId === socket.id) {
         onlineUsers.delete(key);
