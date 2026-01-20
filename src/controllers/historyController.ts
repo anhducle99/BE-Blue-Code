@@ -1,16 +1,38 @@
 import { Request, Response } from "express";
 import { CallLogModel } from "../models/CallLog";
+import { UserModel } from "../models/User";
 
 export const getCallHistory = async (req: Request, res: Response) => {
   try {
+    const userId = (req as any).user?.id;
+
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: "Không tìm thấy thông tin người dùng"
+      });
+    }
+
+    const user = await UserModel.findById(userId);
+
+    if (!user || !user.organization_id) {
+      return res.status(403).json({
+        success: false,
+        message: "User không thuộc organization nào"
+      });
+    }
+
     const { sender, receiver, startDate, endDate } = req.query;
 
-    const logs = await CallLogModel.findByFilters({
-      sender: sender as string,
-      receiver: receiver as string,
-      startDate: startDate as string,
-      endDate: endDate as string,
-    });
+    const logs = await CallLogModel.findByOrganization(
+      user.organization_id,
+      {
+        sender: sender as string,
+        receiver: receiver as string,
+        startDate: startDate as string,
+        endDate: endDate as string,
+      }
+    );
 
     const result = logs.map((log) => ({
       id: log.id,
@@ -25,8 +47,12 @@ export const getCallHistory = async (req: Request, res: Response) => {
       image_url: log.image_url,
     }));
 
-    res.json(result);
+    return res.json(result);
   } catch (error) {
-    res.status(500).json({ error: "Internal Server Error" });
+    console.error("Error in getCallHistory:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Lỗi server khi lấy lịch sử cuộc gọi"
+    });
   }
 };

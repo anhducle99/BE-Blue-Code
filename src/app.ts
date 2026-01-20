@@ -139,9 +139,23 @@ const io = new SocketServer(server, {
 setIO(io);
 
 io.on("connection", (socket) => {
-  socket.on("register", (data) => {
+  socket.on("register", async (data) => {
     const { name, department_id, department_name } = data;
     const key = `${department_name}_${department_name}`;
+    const { UserModel } = await import("./models/User");
+
+    let user = await UserModel.findByEmail(name);
+    if (!user) {
+      const allUsers = await UserModel.findAll();
+      user = allUsers.find(u => u.name === name || u.email === name) || null;
+    }
+
+    if (user && user.organization_id) {
+      const roomName = `organization_${user.organization_id}`;
+      socket.join(roomName);
+    } else {
+    }
+
     onlineUsers.set(key, {
       socketId: socket.id,
       name: data.name,
@@ -154,7 +168,38 @@ io.on("connection", (socket) => {
     try {
       const updatedLog = await CallLogModel.updateStatus(callId, toDept, "accepted");
       if (updatedLog) {
-        io.emit("callLogUpdated", {
+        const { UserModel } = await import("./models/User");
+        const { prisma } = await import("./models/db");
+
+        let senderUser = null;
+        const fromUserId = parseInt(updatedLog.from_user);
+        if (!isNaN(fromUserId)) {
+          senderUser = await UserModel.findById(fromUserId);
+        }
+        if (!senderUser) {
+          const userByName = await prisma.user.findFirst({
+            where: { name: updatedLog.from_user },
+            select: { organizationId: true }
+          });
+          if (userByName) senderUser = { organization_id: userByName.organizationId };
+        }
+
+        let receiverUser = null;
+        const toUserId = parseInt(updatedLog.to_user);
+        if (!isNaN(toUserId)) {
+          receiverUser = await UserModel.findById(toUserId);
+        }
+        if (!receiverUser) {
+          const userByName = await prisma.user.findFirst({
+            where: { name: updatedLog.to_user },
+            select: { organizationId: true }
+          });
+          if (userByName) receiverUser = { organization_id: userByName.organizationId };
+        }
+
+        const organizationId = senderUser?.organization_id || receiverUser?.organization_id;
+
+        const callLogData = {
           id: updatedLog.id,
           call_id: updatedLog.call_id,
           from_user: updatedLog.from_user,
@@ -165,11 +210,17 @@ io.on("connection", (socket) => {
           created_at: updatedLog.created_at,
           accepted_at: updatedLog.accepted_at,
           rejected_at: updatedLog.rejected_at,
-        });
+        };
+
+        if (organizationId) {
+          const roomName = `organization_${organizationId}`;
+          io.to(roomName).emit("callLogUpdated", callLogData);
+        } else {
+          io.emit("callLogUpdated", callLogData);
+        }
         io.emit("callStatusUpdate", { callId, toDept, status: "accepted" });
       }
     } catch (err) {
-      console.error("callAccepted error:", err);
     }
   });
 
@@ -177,7 +228,38 @@ io.on("connection", (socket) => {
     try {
       const updatedLog = await CallLogModel.updateStatus(callId, toDept, "rejected");
       if (updatedLog) {
-        io.emit("callLogUpdated", {
+        const { UserModel } = await import("./models/User");
+        const { prisma } = await import("./models/db");
+
+        let senderUser = null;
+        const fromUserId = parseInt(updatedLog.from_user);
+        if (!isNaN(fromUserId)) {
+          senderUser = await UserModel.findById(fromUserId);
+        }
+        if (!senderUser) {
+          const userByName = await prisma.user.findFirst({
+            where: { name: updatedLog.from_user },
+            select: { organizationId: true }
+          });
+          if (userByName) senderUser = { organization_id: userByName.organizationId };
+        }
+
+        let receiverUser = null;
+        const toUserId = parseInt(updatedLog.to_user);
+        if (!isNaN(toUserId)) {
+          receiverUser = await UserModel.findById(toUserId);
+        }
+        if (!receiverUser) {
+          const userByName = await prisma.user.findFirst({
+            where: { name: updatedLog.to_user },
+            select: { organizationId: true }
+          });
+          if (userByName) receiverUser = { organization_id: userByName.organizationId };
+        }
+
+        const organizationId = senderUser?.organization_id || receiverUser?.organization_id;
+
+        const callLogData = {
           id: updatedLog.id,
           call_id: updatedLog.call_id,
           from_user: updatedLog.from_user,
@@ -188,11 +270,17 @@ io.on("connection", (socket) => {
           created_at: updatedLog.created_at,
           accepted_at: updatedLog.accepted_at,
           rejected_at: updatedLog.rejected_at,
-        });
+        };
+
+        if (organizationId) {
+          const roomName = `organization_${organizationId}`;
+          io.to(roomName).emit("callLogUpdated", callLogData);
+        } else {
+          io.emit("callLogUpdated", callLogData);
+        }
         io.emit("callStatusUpdate", { callId, toDept, status: "rejected" });
       }
     } catch (err) {
-      console.error("callRejected error:", err);
     }
   });
 
@@ -200,7 +288,38 @@ io.on("connection", (socket) => {
     try {
       const updatedLog = await CallLogModel.updateStatus(callId, toDept, "unreachable");
       if (updatedLog) {
-        io.emit("callLogUpdated", {
+        const { UserModel } = await import("./models/User");
+        const { prisma } = await import("./models/db");
+
+        let senderUser = null;
+        const fromUserId = parseInt(updatedLog.from_user);
+        if (!isNaN(fromUserId)) {
+          senderUser = await UserModel.findById(fromUserId);
+        }
+        if (!senderUser) {
+          const userByName = await prisma.user.findFirst({
+            where: { name: updatedLog.from_user },
+            select: { organizationId: true }
+          });
+          if (userByName) senderUser = { organization_id: userByName.organizationId };
+        }
+
+        let receiverUser = null;
+        const toUserId = parseInt(updatedLog.to_user);
+        if (!isNaN(toUserId)) {
+          receiverUser = await UserModel.findById(toUserId);
+        }
+        if (!receiverUser) {
+          const userByName = await prisma.user.findFirst({
+            where: { name: updatedLog.to_user },
+            select: { organizationId: true }
+          });
+          if (userByName) receiverUser = { organization_id: userByName.organizationId };
+        }
+
+        const organizationId = senderUser?.organization_id || receiverUser?.organization_id;
+
+        const callLogData = {
           id: updatedLog.id,
           call_id: updatedLog.call_id,
           from_user: updatedLog.from_user,
@@ -211,11 +330,17 @@ io.on("connection", (socket) => {
           created_at: updatedLog.created_at,
           accepted_at: updatedLog.accepted_at,
           rejected_at: updatedLog.rejected_at,
-        });
+        };
+
+        if (organizationId) {
+          const roomName = `organization_${organizationId}`;
+          io.to(roomName).emit("callLogUpdated", callLogData);
+        } else {
+          io.emit("callLogUpdated", callLogData);
+        }
         io.emit("callStatusUpdate", { callId, toDept, status: "unreachable" });
       }
     } catch (err) {
-      console.error("callTimeout error:", err);
     }
   });
 
@@ -228,7 +353,6 @@ io.on("connection", (socket) => {
   });
 
   socket.on("error", (error) => {
-    console.error(`Socket.IO error for ${socket.id}:`, error);
   });
 });
 

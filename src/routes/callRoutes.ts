@@ -2,10 +2,12 @@ import { Router } from "express";
 import { CallLogModel } from "../models/CallLog";
 import { getIO, onlineUsers } from "../socketStore";
 import { randomUUID } from "crypto";
+import { authMiddleware } from "../middleware/authMiddleware";
+import { validateCallPermission } from "../middleware/validateCallPermission";
 
 const router = Router();
 
-router.post("/", async (req, res) => {
+router.post("/", authMiddleware, validateCallPermission, async (req, res) => {
   try {
     const { targetKeys, message, fromDept, image_url } = req.body;
     const io = getIO();
@@ -42,8 +44,12 @@ router.post("/", async (req, res) => {
       }
     }
 
+    const userFull = (req as any).userFull;
+    const organizationId = userFull?.organization_id;
+
+
     createdLogs.forEach((callLog) => {
-      io.emit("callLogCreated", {
+      const callLogData = {
         id: callLog.id,
         call_id: callLog.call_id,
         from_user: callLog.from_user,
@@ -54,7 +60,14 @@ router.post("/", async (req, res) => {
         created_at: callLog.created_at,
         accepted_at: callLog.accepted_at,
         rejected_at: callLog.rejected_at,
-      });
+      };
+
+      if (organizationId) {
+        const roomName = `organization_${organizationId}`;
+        io.to(roomName).emit("callLogCreated", callLogData);
+      } else {
+        io.emit("callLogCreated", callLogData);
+      }
     });
 
 

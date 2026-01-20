@@ -71,6 +71,80 @@ export class CallLogModel {
     }));
   }
 
+  static async findByOrganization(
+    organizationId: number,
+    filters?: {
+      sender?: string;
+      receiver?: string;
+      startDate?: string;
+      endDate?: string;
+    }
+  ): Promise<ICallLog[]> {
+    const orgUsers = await prisma.user.findMany({
+      where: { organizationId },
+      select: {
+        name: true,
+        departmentId: true,
+      },
+    });
+
+    const orgDepartments = await prisma.department.findMany({
+      where: {
+        users: {
+          some: {
+            organizationId,
+          },
+        },
+      },
+      select: {
+        name: true,
+      },
+    });
+
+    const orgUserNames = orgUsers.map((u) => u.name);
+    const orgDeptNames = orgDepartments.map((d) => d.name);
+    const allOrgIdentifiers = [...orgUserNames, ...orgDeptNames];
+
+    const where: any = {
+      OR: [
+        { fromUser: { in: allOrgIdentifiers } },
+        { toUser: { in: allOrgIdentifiers } },
+      ],
+    };
+
+    if (filters?.sender) {
+      where.fromUser = { contains: filters.sender, mode: "insensitive" };
+    }
+
+    if (filters?.receiver) {
+      where.toUser = { contains: filters.receiver, mode: "insensitive" };
+    }
+
+    if (filters?.startDate || filters?.endDate) {
+      where.createdAt = {};
+      if (filters.startDate) where.createdAt.gte = new Date(filters.startDate);
+      if (filters.endDate) where.createdAt.lte = new Date(filters.endDate);
+    }
+
+    const logs = await prisma.callLog.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+    });
+
+    return logs.map((log: any) => ({
+      id: log.id,
+      call_id: log.callId,
+      from_user: log.fromUser,
+      to_user: log.toUser,
+      message: log.message || undefined,
+      image_url: log.imageUrl || undefined,
+      status: log.status as ICallLog["status"],
+      created_at: log.createdAt,
+      accepted_at: log.acceptedAt || undefined,
+      rejected_at: log.rejectedAt || undefined,
+    }));
+  }
+
   static async findByFilters(filters: {
     sender?: string;
     receiver?: string;
