@@ -28,25 +28,28 @@ model User {
 }
 
 model Department {
-  id          Int       @id @default(autoincrement())
-  name        String
-  phone       String?
-  alertGroup  String?   @map("alert_group")
-  createdAt   DateTime  @default(now()) @map("created_at")
-  updatedAt   DateTime  @updatedAt @map("updated_at")
-  historyFrom History[] @relation("DepartmentFrom")
-  historyTo   History[] @relation("DepartmentTo")
-  users       User[]
+  id             Int            @id @default(autoincrement())
+  name           String
+  phone          String?
+  alertGroup     String?        @map("alert_group")
+  organizationId Int?           @map("organization_id")
+  createdAt      DateTime       @default(now()) @map("created_at")
+  updatedAt      DateTime       @updatedAt @map("updated_at")
+  historyFrom    History[]      @relation("DepartmentFrom")
+  historyTo      History[]      @relation("DepartmentTo")
+  users          User[]
+  organization   Organization?  @relation(fields: [organizationId], references: [id])
 
   @@map("departments")
 }
 
 model Organization {
-  id        Int      @id @default(autoincrement())
-  name      String
-  urlLogo   String?
-  createdAt DateTime @default(now()) @map("created_at")
-  users     User[]
+  id           Int          @id @default(autoincrement())
+  name         String
+  urlLogo      String?
+  createdAt    DateTime     @default(now()) @map("created_at")
+  users        User[]
+  departments  Department[]
 
   @@map("organizations")
 }
