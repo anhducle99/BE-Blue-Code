@@ -35,20 +35,170 @@ export const getDepartmentStats = async (req: Request, res: Response) => {
   }
 
   try {
+    const userId = (req as any).user?.id;
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: "Không tìm thấy thông tin người dùng",
+      });
+    }
+
+    const { UserModel } = await import("../models/User");
+    const user = await UserModel.findById(userId);
+    if (!user || !user.organization_id) {
+      return res.status(403).json({
+        success: false,
+        message: "User không thuộc organization nào",
+      });
+    }
+
+    const organizationId = user.organization_id;
+
     const { start, end } = getUTCDateRangeVN(
       startDate as string,
       endDate as string
     );
 
-    const logs = await CallLogModel.findByDateRange(start, end);
-
-    const departments = await prisma.department.findMany({
+    let departments: any[] = [];
+    
+    const allDepartmentsInDB = await prisma.department.findMany({
       orderBy: { id: "asc" },
     });
+    allDepartmentsInDB.forEach((d: any) => {
+    });
+    
+    try {
+      departments = await prisma.department.findMany({
+        where: {
+          organizationId: organizationId, 
+        } as any,  
+        orderBy: { id: "asc" },
+      });
+    } catch (err: any) {
+    }
 
-    const deptMap: Record<string, any> = {};
+    if (departments.length === 0) {
+      const orgUsersForDepts = await prisma.user.findMany({
+        where: { organizationId },
+        select: { departmentId: true, name: true },
+      });
+        orgUsersForDepts.forEach((u: any) => {
+      });
+      
+      const orgDepartmentIds = Array.from(
+        new Set(
+          orgUsersForDepts
+            .map((u) => u.departmentId)
+            .filter((id): id is number => id !== null)
+        )
+      );
+            
+      if (orgDepartmentIds.length > 0) {
+        departments = await prisma.department.findMany({
+          where: {
+            id: { in: orgDepartmentIds },
+          },
+          orderBy: { id: "asc" },
+        });
+      } else {
+        departments = await prisma.department.findMany({
+          orderBy: { id: "asc" },
+        });
+      }
+    }
+    
     departments.forEach((d: any) => {
-      deptMap[d.name.trim().toLowerCase()] = {
+    });
+
+    const orgUsers = await prisma.user.findMany({
+      where: { organizationId },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        departmentId: true,
+        department: {
+          select: {
+            name: true,
+          },
+        },
+        isFloorAccount: true,
+      },
+    });
+
+    const orgUserNames = orgUsers.map((u) => u.name);
+    const orgDeptNames = departments.map((d) => d.name);
+    const allOrgIdentifiers = [...orgUserNames, ...orgDeptNames];
+
+    const logs = await prisma.callLog.findMany({
+      where: {
+        OR: [
+          { fromUser: { in: allOrgIdentifiers } },
+          { toUser: { in: allOrgIdentifiers } },
+        ],
+        createdAt: {
+          gte: new Date(start),
+          lte: new Date(end),
+        },
+      },
+    });
+
+    const allUsers = orgUsers;
+
+    const userByNameMap = new Map<string, any>();
+    const userByEmailMap = new Map<string, any>();
+    const deptByIdMap = new Map<number, any>();
+    const deptByNameMap = new Map<string, any>();
+    const usersByDeptMap = new Map<number, any[]>();
+    
+    departments.forEach((dept: any) => {
+      deptByIdMap.set(dept.id, dept);
+      deptByNameMap.set(dept.name.toLowerCase().trim(), dept);
+    });
+    
+    allUsers.forEach((user) => {
+      userByNameMap.set(user.name.toLowerCase().trim(), user);
+      if (user.email) {
+        userByEmailMap.set(user.email.toLowerCase().trim(), user);
+      }
+      if (user.departmentId) {
+        if (!usersByDeptMap.has(user.departmentId)) {
+          usersByDeptMap.set(user.departmentId, []);
+        }
+        usersByDeptMap.get(user.departmentId)!.push(user);
+      }
+    });
+
+    const findUserOrDept = (identifier: string) => {
+      const key = identifier.toLowerCase().trim();
+      
+      let user = userByNameMap.get(key);
+      if (user) {
+        const dept = user.departmentId ? deptByIdMap.get(user.departmentId) || null : null;
+        return { user, department: dept };
+      }
+      
+      user = userByEmailMap.get(key);
+      if (user) {
+        const dept = user.departmentId ? deptByIdMap.get(user.departmentId) || null : null;
+        return { user, department: dept };
+      }
+      
+      const dept = deptByNameMap.get(key);
+      if (dept) {
+        const deptUsers = usersByDeptMap.get(dept.id) || [];
+        const floorAccountUser = deptUsers.find(u => u.isFloorAccount === true);
+        const nonFloorAccountUser = deptUsers.find(u => !u.isFloorAccount);
+        const deptUser = floorAccountUser || nonFloorAccountUser || deptUsers[0];
+        return { user: deptUser || null, department: dept };
+      }
+      
+      return { user: null, department: null };
+    };
+
+    const deptMap: Record<number, any> = {};
+    departments.forEach((d: any) => {
+      deptMap[d.id] = {
         id: d.id,
         name: d.name,
         alert_group: d.alertGroup,
@@ -56,18 +206,94 @@ export const getDepartmentStats = async (req: Request, res: Response) => {
         received: 0,
       };
     });
+    
+    if (departments.length > 0) {
+      departments.slice(0, 5).forEach((d: any) => {
+      });
+    }
+    
+    if (allUsers.length > 0) {
+      allUsers.slice(0, 10).forEach((u: any) => {
+      });
+    }
+    
+    if (logs.length > 0) {
+      logs.slice(0, 10).forEach((log: any, idx: number) => {
+      });
+    }
+    
+    let processedCount = 0;
+    let sentCount = 0;
+    let receivedCount = 0;
+    let skippedNoSender = 0;
+    let skippedNoReceiver = 0;
+    let skippedSenderNotFloor = 0;
+    let skippedNoReceiverDept = 0;
+    let skippedNotAccepted = 0;
+    let skippedReceiverIsFloor = 0;
+    
+    logs.forEach((log, index) => {
+      const senderInfo = findUserOrDept(log.fromUser);
+      const receiverInfo = findUserOrDept(log.toUser);
+      
+      const senderUser = senderInfo.user;
+      const receiverUser = receiverInfo.user;
+      const receiverDept = receiverInfo.department;
 
-    logs.forEach((l) => {
-      const fromKey = l.from_user.trim().toLowerCase();
-      const toKey = l.to_user.trim().toLowerCase();
-      if (deptMap[fromKey]) deptMap[fromKey].sent += 1;
-      if (deptMap[toKey]) deptMap[toKey].received += 1;
+      if (index < 10) {
+        if (senderUser) {
+        } else {
+        }
+        if (receiverUser) {
+        }
+        if (receiverDept) {
+        } else {
+        }
+      }
+
+    
+      if (!senderUser) {
+        skippedNoSender++;
+      } else if (senderUser.isFloorAccount !== true) {
+        skippedSenderNotFloor++;
+      } else if (!receiverDept) {
+        skippedNoReceiverDept++;
+      } else if (!deptMap[receiverDept.id]) {
+        skippedNoReceiverDept++;
+      } else {
+        const deptId = receiverDept.id;
+        deptMap[deptId].sent += 1;
+        sentCount++;
+      }
+
+      if (!receiverDept) {
+        skippedNoReceiver++;
+      } else if (!deptMap[receiverDept.id]) {
+        skippedNoReceiver++;
+      } else if (log.status !== "accepted" && log.acceptedAt === null) {
+        skippedNotAccepted++;
+      } else if (!receiverUser) {
+        skippedNoReceiver++;
+      } else if (receiverUser.isFloorAccount === true) {
+        skippedReceiverIsFloor++;
+      } else if (receiverUser.departmentId !== receiverDept.id) {
+        skippedNoReceiver++;
+      } else {
+        const deptId = receiverDept.id;
+        deptMap[deptId].received += 1;
+        receivedCount++;
+      }
+      
+      processedCount++;
     });
 
     const deptStats = Object.values(deptMap);
-    res.json(deptStats);
+    deptStats.forEach((dept: any) => {
+    });
+    
+    return res.json(deptStats);
   } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
+    return res.status(500).json({ success: false, message: err.message });
   }
 };
 
@@ -81,52 +307,257 @@ export const getGroupStats = async (req: Request, res: Response) => {
   }
 
   try {
+    const userId = (req as any).user?.id;
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: "Không tìm thấy thông tin người dùng",
+      });
+    }
+
+    const { UserModel } = await import("../models/User");
+    const user = await UserModel.findById(userId);
+    if (!user || !user.organization_id) {
+      return res.status(403).json({
+        success: false,
+        message: "User không thuộc organization nào",
+      });
+    }
+
+    const organizationId = user.organization_id;
+
     const { start, end } = getUTCDateRangeVN(
       startDate as string,
       endDate as string
     );
 
-    const logs = await CallLogModel.findByDateRange(start, end);
+    const organization = await prisma.organization.findUnique({
+      where: { id: organizationId },
+      select: { name: true },
+    });
+    const organizationName = organization?.name || `Organization ${organizationId}`;
+    let departments: any[] = [];
+    
+    try {
+      departments = await prisma.department.findMany({
+        where: {
+          organizationId: organizationId,
+        } as any,
+        orderBy: { id: "asc" },
+      });
+    } catch (err) {
+    }
 
-    const departments = await prisma.department.findMany({
-      where: { alertGroup: { not: null } },
+    if (departments.length === 0) {
+      const orgUsersForDepts = await prisma.user.findMany({
+        where: { organizationId },
+        select: { departmentId: true },
+      });
+      
+      const orgDepartmentIds = Array.from(
+        new Set(
+          orgUsersForDepts
+            .map((u) => u.departmentId)
+            .filter((id): id is number => id !== null)
+        )
+      );
+      
+      if (orgDepartmentIds.length > 0) {
+        departments = await prisma.department.findMany({
+          where: {
+            id: { in: orgDepartmentIds },
+          },
+          orderBy: { id: "asc" },
+        });
+      }
+    }
+
+    const orgUsers = await prisma.user.findMany({
+      where: { organizationId },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        departmentId: true,
+        department: {
+          select: {
+            name: true,
+          },
+        },
+        isFloorAccount: true,
+      },
     });
 
-    const deptMap: Record<string, any> = {};
-    departments.forEach((d: any) => {
-      deptMap[d.name.trim().toLowerCase()] = {
-        id: d.id,
-        alert_group: d.alertGroup,
-        sent: 0,
-        received: 0,
-      };
+    const orgUserNames = orgUsers.map((u) => u.name);
+    const orgDeptNames = departments.map((d) => d.name);
+    const allOrgIdentifiers = [...orgUserNames, ...orgDeptNames];
+
+    const logs = await prisma.callLog.findMany({
+      where: {
+        OR: [
+          { fromUser: { in: allOrgIdentifiers } },
+          { toUser: { in: allOrgIdentifiers } },
+        ],
+        createdAt: {
+          gte: new Date(start),
+          lte: new Date(end),
+        },
+      },
     });
 
-    logs.forEach((l) => {
-      const fromKey = l.from_user.trim().toLowerCase();
-      const toKey = l.to_user.trim().toLowerCase();
-      if (deptMap[fromKey]) deptMap[fromKey].sent += 1;
-      if (deptMap[toKey]) deptMap[toKey].received += 1;
+    const allUsers = orgUsers;
+    const userByNameMap = new Map<string, any>();
+    const userByEmailMap = new Map<string, any>();
+    const deptByIdMap = new Map<number, any>();
+    const deptByNameMap = new Map<string, any>();
+    const usersByDeptMap = new Map<number, any[]>();
+    
+    departments.forEach((dept: any) => {
+      deptByIdMap.set(dept.id, dept);
+      deptByNameMap.set(dept.name.toLowerCase().trim(), dept);
     });
 
-    const deptStats = Object.values(deptMap);
+    allUsers.forEach((user) => {
+      userByNameMap.set(user.name.toLowerCase().trim(), user);
+      if (user.email) {
+        userByEmailMap.set(user.email.toLowerCase().trim(), user);
+      }
+      if (user.departmentId) {
+        if (!usersByDeptMap.has(user.departmentId)) {
+          usersByDeptMap.set(user.departmentId, []);
+        }
+        usersByDeptMap.get(user.departmentId)!.push(user);
+      }
+    });
+
+    const findUserOrDept = (identifier: string) => {
+      const key = identifier.toLowerCase().trim();
+      
+      let user = userByNameMap.get(key);
+      if (user) {
+        const dept = user.departmentId ? deptByIdMap.get(user.departmentId) : null;
+        return { user, department: dept };
+      }
+      
+      user = userByEmailMap.get(key);
+      if (user) {
+        const dept = user.departmentId ? deptByIdMap.get(user.departmentId) : null;
+        return { user, department: dept };
+      }
+      
+      const dept = deptByNameMap.get(key);
+      if (dept) {
+        const deptUsers = usersByDeptMap.get(dept.id) || [];
+        const floorAccountUser = deptUsers.find(u => u.isFloorAccount === true);
+        const nonFloorAccountUser = deptUsers.find(u => !u.isFloorAccount);
+        const deptUser = floorAccountUser || nonFloorAccountUser || deptUsers[0];
+        return { user: deptUser || null, department: dept };
+      }
+      
+      return { user: null, department: null };
+    };
 
     const groupMap: Record<string, { sent: number; received: number }> = {};
-    deptStats.forEach((d) => {
-      const group = d.alert_group.trim();
-      if (!groupMap[group]) groupMap[group] = { sent: 0, received: 0 };
-      groupMap[group].sent += d.sent;
-      groupMap[group].received += d.received;
+    departments.forEach((dept: any) => {
+      const deptName = dept.name.trim();
+      if (!groupMap[deptName]) {
+        groupMap[deptName] = { sent: 0, received: 0 };
+      }
+    });
+    const orgDeptIdsSet = new Set(departments.map((d: any) => d.id));
+    if (departments.length > 0) {
+      departments.slice(0, 5).forEach((d: any) => {
+      });
+    }
+    
+    if (logs.length > 0) {
+      logs.slice(0, 10).forEach((log: any, idx: number) => {
+      });
+    }
+    
+    let processedCount = 0;
+    let sentCount = 0;
+    let receivedCount = 0;
+    let skippedNoReceiverDept = 0;
+    let skippedNoSender = 0;
+    let skippedSenderNotFloor = 0;
+    let skippedNoReceiver = 0;
+    let skippedNotAccepted = 0;
+    let skippedReceiverIsFloor = 0;
+    
+    logs.forEach((log, index) => {
+      const senderInfo = findUserOrDept(log.fromUser);
+      const receiverInfo = findUserOrDept(log.toUser);
+      
+      const senderUser = senderInfo.user;
+      const receiverUser = receiverInfo.user;
+      const receiverDept = receiverInfo.department;
+
+      if (!receiverDept || !orgDeptIdsSet.has(receiverDept.id)) {
+        skippedNoReceiverDept++;
+        processedCount++;
+        return;
+      }
+
+      const groupName = receiverDept.name.trim();
+      if (!groupMap[groupName]) {
+        groupMap[groupName] = { sent: 0, received: 0 };
+      }
+
+      if (index < 10) {
+        if (senderUser) {
+        } else {
+        }
+        if (receiverDept) {
+        } else {
+        }
+        if (receiverUser) {
+        }
+      }
+
+      if (!senderUser) {
+        skippedNoSender++;
+      } else if (senderUser.isFloorAccount !== true) {
+        skippedSenderNotFloor++;
+      } else {
+        groupMap[groupName].sent += 1;
+        sentCount++;
+      }
+
+      if (!receiverDept) {
+        skippedNoReceiver++;
+      } else if (log.status !== "accepted" && log.acceptedAt === null) {
+        skippedNotAccepted++;
+      } else if (!receiverUser) {
+        skippedNoReceiver++;
+      } else if (receiverUser.isFloorAccount === true) {
+        skippedReceiverIsFloor++;
+      } else if (receiverUser.departmentId !== receiverDept.id) {
+        skippedNoReceiver++;
+      } else {
+        groupMap[groupName].received += 1;
+        receivedCount++;
+      }
+      processedCount++;
+    });
+    
+   
+    if (Object.keys(groupMap).length > 0) {
+    }
+
+    const groupStats = Object.entries(groupMap)
+      .map(([label, counts]) => ({
+        label,
+        sent: counts.sent,
+        received: counts.received,
+      }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+
+    groupStats.forEach((group: any) => {
     });
 
-    const groupStats = Object.entries(groupMap).map(([label, counts]) => ({
-      label,
-      sent: counts.sent,
-      received: counts.received,
-    }));
-
-    res.json(groupStats);
+    return res.json(groupStats);
   } catch (err: any) {
-    res.status(500).json({ success: false, message: err.message });
+    return res.status(500).json({ success: false, message: err.message });
   }
 };
