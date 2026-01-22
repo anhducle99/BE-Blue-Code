@@ -4,10 +4,24 @@ import bcrypt from "bcrypt";
 
 export const getUsers = async (req: Request, res: Response) => {
   try {
-    const users = await UserModel.findAll();
+    const userId = (req as any).user?.id;
+    let organizationId: number | undefined = undefined;
+
+    if (userId) {
+      const user = await UserModel.findById(userId);
+      if (user?.organization_id) {
+        organizationId = user.organization_id;
+      }
+    }
+
+    const queryOrgId = req.query.organization_id;
+    if (queryOrgId) {
+      organizationId = parseInt(queryOrgId as string);
+    }
+
+    const users = await UserModel.findAll(organizationId);
     res.json({ success: true, data: users });
   } catch (err) {
-    console.error(err);
     res.status(500).json({ success: false, message: "Server error" });
   }
 };
@@ -26,7 +40,6 @@ export const getUser = async (req: Request, res: Response) => {
 
     res.json({ success: true, data: user });
   } catch (err) {
-    console.error(err);
     res.status(500).json({ success: false, message: "Server error" });
   }
 };
@@ -70,7 +83,6 @@ export const createUser = async (req: Request, res: Response) => {
 
     res.status(201).json({ success: true, data: user });
   } catch (err) {
-    console.error(err);
     res.status(500).json({ success: false, message: "Server error" });
   }
 };
@@ -95,7 +107,6 @@ export const updateUser = async (req: Request, res: Response) => {
     const updatedUser = await UserModel.update(id, updateData);
     res.json({ success: true, data: updatedUser });
   } catch (err) {
-    console.error(err);
     res.status(500).json({ success: false, message: "Server error" });
   }
 };
@@ -109,7 +120,6 @@ export const deleteUser = async (req: Request, res: Response) => {
     await UserModel.delete(id);
     res.json({ success: true, message: "User deleted" });
   } catch (err) {
-    console.error(err);
     res.status(500).json({ success: false, message: "Server error" });
   }
 };

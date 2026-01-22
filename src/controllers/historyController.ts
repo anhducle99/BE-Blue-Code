@@ -24,13 +24,27 @@ export const getCallHistory = async (req: Request, res: Response) => {
 
     const { sender, receiver, startDate, endDate } = req.query;
 
+    if (startDate && isNaN(Date.parse(startDate as string))) {
+      return res.status(400).json({
+        success: false,
+        message: "startDate không đúng định dạng (YYYY-MM-DD)"
+      });
+    }
+
+    if (endDate && isNaN(Date.parse(endDate as string))) {
+      return res.status(400).json({
+        success: false,
+        message: "endDate không đúng định dạng (YYYY-MM-DD)"
+      });
+    }
+
     const logs = await CallLogModel.findByOrganization(
       user.organization_id,
       {
-        sender: sender as string,
-        receiver: receiver as string,
-        startDate: startDate as string,
-        endDate: endDate as string,
+        sender: sender as string | undefined,
+        receiver: receiver as string | undefined,
+        startDate: startDate as string | undefined,
+        endDate: endDate as string | undefined,
       }
     );
 
@@ -48,11 +62,11 @@ export const getCallHistory = async (req: Request, res: Response) => {
     }));
 
     return res.json(result);
-  } catch (error) {
-    console.error("Error in getCallHistory:", error);
+  } catch (error: any) {
     return res.status(500).json({
       success: false,
-      message: "Lỗi server khi lấy lịch sử cuộc gọi"
+      message: "Lỗi server khi lấy lịch sử cuộc gọi",
+      error: process.env.NODE_ENV === "development" ? error.message : undefined
     });
   }
 };

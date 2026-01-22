@@ -35,7 +35,6 @@ export const validateCallPermission = async (
     
     next();
   } catch (error) {
-    console.error("Error validating call permission:", error);
     return res.status(500).json({
       success: false,
       message: "Lỗi server khi validate quyền"

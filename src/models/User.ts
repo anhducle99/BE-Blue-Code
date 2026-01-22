@@ -50,8 +50,15 @@ function sanitizeUser(user: any, includePassword: boolean = false): IUser {
 }
 
 export class UserModel {
-  static async findAll(): Promise<IUser[]> {
+  static async findAll(organizationId?: number): Promise<IUser[]> {
+    const where: any = {};
+    
+    if (organizationId !== undefined) {
+      where.organizationId = organizationId;
+    }
+
     const users = await prisma.user.findMany({
+      where,
       include: {
         department: { select: { name: true } },
         organization: { select: { name: true } },
