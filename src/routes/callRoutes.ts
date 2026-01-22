@@ -73,7 +73,6 @@ router.post("/", authMiddleware, validateCallPermission, async (req, res) => {
 
     return res.json({ success: true, callId });
   } catch (err) {
-    console.error("Error in POST /api/call:", err);
     return res.status(500).json({ success: false, message: "Server error" });
   }
 });
@@ -84,7 +83,6 @@ router.get("/", async (req, res) => {
     const logs = await CallLogModel.findByDepartment(department as string);
     res.json({ success: true, data: logs });
   } catch (err) {
-    console.error("Error in GET /api/call:", err);
     res.status(500).json({ success: false });
   }
 });

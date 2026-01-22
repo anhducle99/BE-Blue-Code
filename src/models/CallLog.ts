@@ -71,6 +71,15 @@ export class CallLogModel {
     }));
   }
 
+  private static normalizeName(name: string): string {
+    return name
+      .toLowerCase()
+      .normalize("NFD") 
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/\s+/g, "")
+      .trim();
+  }
+
   static async findByOrganization(
     organizationId: number,
     filters?: {
@@ -90,48 +99,103 @@ export class CallLogModel {
 
     const orgDepartments = await prisma.department.findMany({
       where: {
-        users: {
-          some: {
-            organizationId,
+        OR: [
+          { organizationId: organizationId as any },
+          {
+            users: {
+              some: {
+                organizationId,
+              },
+            },
           },
-        },
+        ],
       },
       select: {
         name: true,
       },
     });
 
-    const orgUserNames = orgUsers.map((u) => u.name);
-    const orgDeptNames = orgDepartments.map((d) => d.name);
-    const allOrgIdentifiers = [...orgUserNames, ...orgDeptNames];
+    const orgUserNames = new Set<string>();
+    const orgDeptNames = new Set<string>();
+    
+    orgUsers.forEach((u) => {
+      orgUserNames.add(u.name.trim());
+      orgUserNames.add(this.normalizeName(u.name));
+    });
+    
+    orgDepartments.forEach((d) => {
+      orgDeptNames.add(d.name.trim());
+      orgDeptNames.add(this.normalizeName(d.name));
+    });
 
-    const where: any = {
-      OR: [
-        { fromUser: { in: allOrgIdentifiers } },
-        { toUser: { in: allOrgIdentifiers } },
-      ],
-    };
+    const allOrgIdentifiers = Array.from(new Set([...orgUserNames, ...orgDeptNames]));
+
+    const whereConditions: any[] = [
+      {
+        OR: [
+          { fromUser: { in: allOrgIdentifiers } },
+          { toUser: { in: allOrgIdentifiers } },
+        ],
+      },
+    ];
 
     if (filters?.sender) {
-      where.fromUser = { contains: filters.sender, mode: "insensitive" };
+      whereConditions.push({
+        OR: [
+          { fromUser: { equals: filters.sender, mode: "insensitive" } },
+          { fromUser: { contains: filters.sender, mode: "insensitive" } },
+        ],
+      });
     }
 
     if (filters?.receiver) {
-      where.toUser = { contains: filters.receiver, mode: "insensitive" };
+      whereConditions.push({
+        OR: [
+          { toUser: { equals: filters.receiver, mode: "insensitive" } },
+          { toUser: { contains: filters.receiver, mode: "insensitive" } },
+        ],
+      });
     }
 
     if (filters?.startDate || filters?.endDate) {
-      where.createdAt = {};
-      if (filters.startDate) where.createdAt.gte = new Date(filters.startDate);
-      if (filters.endDate) where.createdAt.lte = new Date(filters.endDate);
+      const dateFilter: any = {};
+      if (filters.startDate) {
+        dateFilter.gte = new Date(filters.startDate);
+      }
+      if (filters.endDate) {
+        const endDate = new Date(filters.endDate);
+        endDate.setHours(23, 59, 59, 999);
+        dateFilter.lte = endDate;
+      }
+      whereConditions.push({ createdAt: dateFilter });
     }
+
+    const where: any = whereConditions.length > 1 ? { AND: whereConditions } : whereConditions[0];
 
     const logs = await prisma.callLog.findMany({
       where,
       orderBy: { createdAt: "desc" },
     });
 
-    return logs.map((log: any) => ({
+    const filteredLogs = logs.filter((log: any) => {
+      const fromUserNormalized = this.normalizeName(log.fromUser);
+      const toUserNormalized = this.normalizeName(log.toUser);
+      const fromUserOriginal = log.fromUser.trim();
+      const toUserOriginal = log.toUser.trim();
+
+      return (
+        orgUserNames.has(fromUserNormalized) ||
+        orgUserNames.has(fromUserOriginal) ||
+        orgDeptNames.has(fromUserNormalized) ||
+        orgDeptNames.has(fromUserOriginal) ||
+        orgUserNames.has(toUserNormalized) ||
+        orgUserNames.has(toUserOriginal) ||
+        orgDeptNames.has(toUserNormalized) ||
+        orgDeptNames.has(toUserOriginal)
+      );
+    });
+
+    return filteredLogs.map((log: any) => ({
       id: log.id,
       call_id: log.callId,
       from_user: log.fromUser,
