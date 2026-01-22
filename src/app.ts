@@ -7,7 +7,7 @@ import http from "http";
 import { networkInterfaces } from "os";
 import { CallLogModel } from "./models/CallLog";
 import { Server as SocketServer } from "socket.io";
-import { onlineUsers, setIO } from "./socketStore";
+import { onlineUsers, setIO, callTimers, normalizeName, findSocketByDepartmentName } from "./socketStore";
 import callRoutes from "./routes/callRoutes";
 import authRoutes from "./routes/authRoutes";
 import departmentRoutes from "./routes/departmentRoutes";
@@ -76,7 +76,6 @@ app.use(
     res: express.Response,
     next: express.NextFunction
   ) => {
-    console.error(err);
     res.status(500).json({ success: false, message: "Internal Server Error" });
   }
 );
@@ -166,6 +165,12 @@ io.on("connection", (socket) => {
 
   socket.on("callAccepted", async ({ callId, toDept }) => {
     try {
+      const timer = callTimers.get(callId);
+      if (timer) {
+        clearTimeout(timer);
+        callTimers.delete(callId);
+      }
+
       const updatedLog = await CallLogModel.updateStatus(callId, toDept, "accepted");
       if (updatedLog) {
         const { UserModel } = await import("./models/User");
@@ -226,6 +231,12 @@ io.on("connection", (socket) => {
 
   socket.on("callRejected", async ({ callId, toDept }) => {
     try {
+      const timer = callTimers.get(callId);
+      if (timer) {
+        clearTimeout(timer);
+        callTimers.delete(callId);
+      }
+
       const updatedLog = await CallLogModel.updateStatus(callId, toDept, "rejected");
       if (updatedLog) {
         const { UserModel } = await import("./models/User");
@@ -288,6 +299,12 @@ io.on("connection", (socket) => {
     try {
       const updatedLog = await CallLogModel.updateStatus(callId, toDept, "unreachable");
       if (updatedLog) {
+        const timer = callTimers.get(callId);
+        if (timer) {
+          clearTimeout(timer);
+          callTimers.delete(callId);
+        }
+
         const { UserModel } = await import("./models/User");
         const { prisma } = await import("./models/db");
 
@@ -341,6 +358,138 @@ io.on("connection", (socket) => {
         io.emit("callStatusUpdate", { callId, toDept, status: "unreachable" });
       }
     } catch (err) {
+    }
+  });
+
+  socket.on("cancelCall", async ({ callId, from, targets }) => {
+    try {
+      const { prisma } = await import("./models/db");
+      const callLogs = await prisma.callLog.findMany({
+        where: { callId },
+      });
+
+      if (callLogs.length === 0) {
+        console.warn(`Call ${callId} not found`);
+        socket.emit("error", { message: "Call not found" });
+        return;
+      }
+
+      const firstCallLog = callLogs[0];
+
+      const normalizedFrom = normalizeName(from);
+      const normalizedSender = normalizeName(firstCallLog.fromUser);
+      
+      if (normalizedFrom !== normalizedSender && firstCallLog.fromUser !== from) {
+        socket.emit("error", { message: "Unauthorized: Only sender can cancel call" });
+        return;
+      }
+
+      const pendingLogs = callLogs.filter(log => log.status === "pending");
+      
+      if (pendingLogs.length === 0) {
+        console.log(`Call ${callId} already processed, cannot cancel`);
+        return;
+      }
+
+      const timer = callTimers.get(callId);
+      if (timer) {
+        clearTimeout(timer);
+        callTimers.delete(callId);
+      }
+
+      const updated = await prisma.callLog.updateMany({
+        where: {
+          callId,
+          status: "pending",
+        },
+        data: {
+          status: "cancelled",
+          rejectedAt: new Date(),
+        },
+      });
+
+      if (updated.count > 0) {
+        const updatedLogs = await prisma.callLog.findMany({
+          where: { callId },
+        });
+        const { UserModel } = await import("./models/User");
+
+        let senderUser = null;
+        const fromUserId = parseInt(firstCallLog.fromUser);
+        if (!isNaN(fromUserId)) {
+          senderUser = await UserModel.findById(fromUserId);
+        }
+        if (!senderUser) {
+          const userByName = await prisma.user.findFirst({
+            where: { name: firstCallLog.fromUser },
+            select: { organizationId: true }
+          });
+          if (userByName) senderUser = { organization_id: userByName.organizationId };
+        }
+
+        let receiverUser = null;
+        const toUserId = parseInt(firstCallLog.toUser);
+        if (!isNaN(toUserId)) {
+          receiverUser = await UserModel.findById(toUserId);
+        }
+        if (!receiverUser) {
+          const userByName = await prisma.user.findFirst({
+            where: { name: firstCallLog.toUser },
+            select: { organizationId: true }
+          });
+          if (userByName) receiverUser = { organization_id: userByName.organizationId };
+        }
+
+        const organizationId = senderUser?.organization_id || receiverUser?.organization_id;
+
+        const targetNames = targets && Array.isArray(targets) 
+          ? targets 
+          : updatedLogs.map(log => log.toUser);
+
+        targetNames.forEach((target: string) => {
+          const targetSocket = findSocketByDepartmentName(target);
+          if (targetSocket) {
+            targetSocket.emit("callStatusUpdate", {
+              callId,
+              toDept: target,
+              status: "cancelled",
+            });
+          }
+        });
+
+   
+        socket.emit("callStatusUpdate", {
+          callId,
+          toDept: targetNames[0] || firstCallLog.toUser,
+          status: "cancelled", 
+        });
+
+        updatedLogs.forEach((log) => {
+          const callLogData = {
+            id: log.id,
+            call_id: log.callId,
+            from_user: log.fromUser,
+            to_user: log.toUser,
+            message: log.message || undefined,
+            image_url: log.imageUrl || undefined,
+            status: log.status,
+            created_at: log.createdAt,
+            accepted_at: log.acceptedAt || undefined,
+            rejected_at: log.rejectedAt || undefined,
+          };
+
+          if (organizationId) {
+            const roomName = `organization_${organizationId}`;
+            io.to(roomName).emit("callLogUpdated", callLogData);
+          } else {
+            io.emit("callLogUpdated", callLogData);
+          }
+        });
+
+        console.log(`Call ${callId} cancelled by ${from}, ${updated.count} logs updated`);
+      }
+    } catch (error: any) {
+      socket.emit("error", { message: "Failed to cancel call" });
     }
   });
 

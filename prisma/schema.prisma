@@ -77,7 +77,7 @@ model CallLog {
   toUser     String    @map("to_user")
   message    String?
   imageUrl   String?   @map("image_url")
-  status     String    @default("pending") // "pending" | "accepted" | "rejected" | "unreachable"
+  status     String    @default("pending") // "pending" | "accepted" | "rejected" | "unreachable" | "cancelled"
   createdAt  DateTime  @default(now()) @map("created_at")
   acceptedAt DateTime? @map("accepted_at")
   rejectedAt DateTime? @map("rejected_at")

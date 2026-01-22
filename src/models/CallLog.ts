@@ -7,7 +7,7 @@ export interface ICallLog {
   to_user: string;
   message?: string;
   image_url?: string;
-  status?: "pending" | "accepted" | "rejected" | "unreachable";
+  status?: "pending" | "accepted" | "rejected" | "unreachable" | "cancelled";
   created_at?: Date;
   accepted_at?: Date;
   rejected_at?: Date;
@@ -290,7 +290,7 @@ export class CallLogModel {
 
     if (status === "accepted") {
       updateData.acceptedAt = timestamp || new Date();
-    } else if (status === "rejected" || status === "unreachable") {
+    } else if (status === "rejected" || status === "unreachable" || status === "cancelled") {
       updateData.rejectedAt = timestamp || new Date();
     }
 
