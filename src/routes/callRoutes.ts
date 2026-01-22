@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { CallLogModel } from "../models/CallLog";
-import { getIO, onlineUsers } from "../socketStore";
+import { getIO, onlineUsers, callTimers, normalizeName } from "../socketStore";
 import { randomUUID } from "crypto";
 import { authMiddleware } from "../middleware/authMiddleware";
 import { validateCallPermission } from "../middleware/validateCallPermission";
@@ -159,6 +159,169 @@ router.get("/", authMiddleware, async (req, res) => {
     res.status(500).json({ 
       success: false,
       message: "Lỗi server khi lấy danh sách cuộc gọi"
+    });
+  }
+});
+
+router.post("/:callId/cancel", authMiddleware, async (req, res) => {
+  try {
+    const userId = (req as any).user?.id;
+    const { callId } = req.params;
+    
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: "Không tìm thấy thông tin người dùng"
+      });
+    }
+
+    const { UserModel } = await import("../models/User");
+    const user = await UserModel.findById(userId);
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found"
+      });
+    }
+
+    const fromDept = user.department_name || user.name;
+    const { prisma } = await import("../models/db");
+    const callLog = await prisma.callLog.findFirst({
+      where: { callId },
+    });
+
+    if (!callLog) {
+      return res.status(404).json({
+        success: false,
+        message: "Call not found"
+      });
+    }
+
+    // Validate quyền: chỉ sender mới được hủy
+    const normalizedFrom = normalizeName(fromDept);
+    const normalizedSender = normalizeName(callLog.fromUser);
+    
+    if (normalizedFrom !== normalizedSender && callLog.fromUser !== fromDept) {
+      return res.status(403).json({
+        success: false,
+        message: "Only sender can cancel call"
+      });
+    }
+
+    // Chỉ hủy nếu status vẫn là pending
+    if (callLog.status !== "pending") {
+      return res.status(400).json({
+        success: false,
+        message: `Call already ${callLog.status}`
+      });
+    }
+
+    // Dừng timer nếu có
+    const timer = callTimers.get(callId);
+    if (timer) {
+      clearTimeout(timer);
+      callTimers.delete(callId);
+    }
+
+    // Cập nhật tất cả call logs với cùng callId thành "cancelled"
+    const updated = await prisma.callLog.updateMany({
+      where: {
+        callId,
+        status: "pending",
+      },
+      data: {
+        status: "cancelled",
+        rejectedAt: new Date(),
+      },
+    });
+
+    if (updated.count === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "No pending calls found to cancel"
+      });
+    }
+
+    // Lấy updated logs để emit
+    const updatedLogs = await prisma.callLog.findMany({
+      where: { callId },
+    });
+
+    // Emit socket events
+    const io = getIO();
+    if (io) {
+      // Lấy organizationId để emit đúng room
+      let senderUser = null;
+      const fromUserId = parseInt(callLog.fromUser);
+      if (!isNaN(fromUserId)) {
+        senderUser = await UserModel.findById(fromUserId);
+      }
+      if (!senderUser) {
+        const userByName = await prisma.user.findFirst({
+          where: { name: callLog.fromUser },
+          select: { organizationId: true }
+        });
+        if (userByName) senderUser = { organization_id: userByName.organizationId };
+      }
+
+      let receiverUser = null;
+      const toUserId = parseInt(callLog.toUser);
+      if (!isNaN(toUserId)) {
+        receiverUser = await UserModel.findById(toUserId);
+      }
+      if (!receiverUser) {
+        const userByName = await prisma.user.findFirst({
+          where: { name: callLog.toUser },
+          select: { organizationId: true }
+        });
+        if (userByName) receiverUser = { organization_id: userByName.organizationId };
+      }
+
+      const organizationId = senderUser?.organization_id || receiverUser?.organization_id;
+
+      // Emit callStatusUpdate cho mỗi updated log
+      updatedLogs.forEach((log) => {
+        const callLogData = {
+          id: log.id,
+          call_id: log.callId,
+          from_user: log.fromUser,
+          to_user: log.toUser,
+          message: log.message || undefined,
+          image_url: log.imageUrl || undefined,
+          status: log.status,
+          created_at: log.createdAt,
+          accepted_at: log.acceptedAt || undefined,
+          rejected_at: log.rejectedAt || undefined,
+        };
+
+        // Emit callStatusUpdate
+        io.emit("callStatusUpdate", {
+          callId,
+          toDept: log.toUser,
+          status: "cancelled",
+        });
+
+        // Broadcast callLogUpdated
+        if (organizationId) {
+          const roomName = `organization_${organizationId}`;
+          io.to(roomName).emit("callLogUpdated", callLogData);
+        } else {
+          io.emit("callLogUpdated", callLogData);
+        }
+      });
+    }
+
+    res.json({
+      success: true,
+      message: "Call cancelled successfully",
+      cancelledCount: updated.count,
+    });
+  } catch (error: any) {
+    res.status(500).json({
+      success: false,
+      message: "Internal server error",
+      error: process.env.NODE_ENV === "development" ? error.message : undefined,
     });
   }
 });
