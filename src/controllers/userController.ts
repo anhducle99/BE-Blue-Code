@@ -32,11 +32,27 @@ export const getUser = async (req: Request, res: Response) => {
     return res.status(400).json({ success: false, message: "ID không hợp lệ" });
 
   try {
+    const currentUserId = (req as any).user?.id;
     const user = await UserModel.findById(id);
-    if (!user)
-      return res
-        .status(404)
-        .json({ success: false, message: "User not found" });
+    
+    if (!user) {
+      return res.status(404).json({ 
+        success: false, 
+        message: "User not found" 
+      });
+    }
+
+    if (currentUserId) {
+      const currentUser = await UserModel.findById(currentUserId);
+      
+      if (currentUser?.organization_id && user.organization_id && 
+          user.organization_id !== currentUser.organization_id) {
+        return res.status(403).json({
+          success: false,
+          message: "Không có quyền truy cập user này"
+        });
+      }
+    }
 
     res.json({ success: true, data: user });
   } catch (err) {
@@ -45,29 +61,73 @@ export const getUser = async (req: Request, res: Response) => {
 };
 
 export const createUser = async (req: Request, res: Response) => {
-  const {
-    name,
-    email,
-    password,
-    phone,
-    role,
-    organization_id,
-    department_id,
-    is_department_account,
-    is_admin_view,
-  } = req.body;
-
-  if (!email || !password)
-    return res
-      .status(400)
-      .json({ success: false, message: "Email và password là bắt buộc" });
-
   try {
+    const currentUserId = (req as any).user?.id;
+    const {
+      name,
+      email,
+      password,
+      phone,
+      role,
+      organization_id,
+      department_id,
+      is_department_account,
+      is_admin_view,
+    } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Email và password là bắt buộc" 
+      });
+    }
+
+    let userOrganizationId: number | undefined = undefined;
+    if (currentUserId) {
+      const currentUser = await UserModel.findById(currentUserId);
+      if (currentUser?.organization_id) {
+        userOrganizationId = currentUser.organization_id;
+      }
+    }
+
+    if (organization_id !== undefined && organization_id !== null) {
+      if (userOrganizationId && organization_id !== userOrganizationId) {
+        return res.status(403).json({
+          success: false,
+          message: "Không thể tạo user cho organization khác"
+        });
+      }
+    }
+
+    if (department_id) {
+      const { DepartmentModel } = await import("../models/Department");
+      const department = await DepartmentModel.findById(department_id);
+      
+      if (!department) {
+        return res.status(400).json({
+          success: false,
+          message: "Department không tồn tại"
+        });
+      }
+
+      if (userOrganizationId && department.organization_id && 
+          department.organization_id !== userOrganizationId) {
+        return res.status(403).json({
+          success: false,
+          message: "Department không thuộc organization của bạn"
+        });
+      }
+    }
+
     const existing = await UserModel.findByEmail(email);
-    if (existing)
-      return res
-        .status(400)
-        .json({ success: false, message: "Email already exists" });
+    if (existing) {
+      return res.status(400).json({ 
+        success: false, 
+        message: "Email already exists" 
+      });
+    }
+
+    const finalOrgId = userOrganizationId || organization_id || undefined;
 
     const user: IUser = await UserModel.create({
       name,
@@ -75,7 +135,7 @@ export const createUser = async (req: Request, res: Response) => {
       password,
       phone,
       role,
-      organization_id,
+      organization_id: finalOrgId,
       department_id,
       is_department_account: is_department_account ?? false,
       is_admin_view: is_admin_view ?? false,
@@ -93,13 +153,65 @@ export const updateUser = async (req: Request, res: Response) => {
     return res.status(400).json({ success: false, message: "ID không hợp lệ" });
 
   try {
+    const currentUserId = (req as any).user?.id;
     const existingUser = await UserModel.findById(id);
-    if (!existingUser)
-      return res
-        .status(404)
-        .json({ success: false, message: "User not found" });
+    
+    if (!existingUser) {
+      return res.status(404).json({ 
+        success: false, 
+        message: "User not found" 
+      });
+    }
 
-    const updateData: Partial<IUser> = { ...req.body };
+    if (currentUserId) {
+      const currentUser = await UserModel.findById(currentUserId);
+      
+      if (currentUser?.organization_id && existingUser.organization_id && 
+          existingUser.organization_id !== currentUser.organization_id) {
+        return res.status(403).json({
+          success: false,
+          message: "Không có quyền cập nhật user này"
+        });
+      }
+    }
+
+    const { organization_id, department_id, ...restBody } = req.body;
+    const updateData: Partial<IUser> = { ...restBody };
+
+    if (organization_id !== undefined && organization_id !== null) {
+      if (currentUserId) {
+        const currentUser = await UserModel.findById(currentUserId);
+        
+        if (currentUser?.organization_id && organization_id !== currentUser.organization_id) {
+          return res.status(403).json({
+            success: false,
+            message: "Không thể thay đổi organization_id"
+          });
+        }
+      }
+      updateData.organization_id = organization_id;
+    }
+
+    if (department_id !== undefined) {
+      const { DepartmentModel } = await import("../models/Department");
+      const department = await DepartmentModel.findById(department_id);
+      
+      if (department) {
+        if (currentUserId) {
+          const currentUser = await UserModel.findById(currentUserId);
+          
+          if (currentUser?.organization_id && department.organization_id && 
+              department.organization_id !== currentUser.organization_id) {
+            return res.status(403).json({
+              success: false,
+              message: "Department không thuộc organization của bạn"
+            });
+          }
+        }
+        updateData.department_id = department_id;
+      }
+    }
+
     if (req.body.password) {
       updateData.password = await bcrypt.hash(req.body.password, 10);
     }
@@ -117,6 +229,35 @@ export const deleteUser = async (req: Request, res: Response) => {
     return res.status(400).json({ success: false, message: "ID không hợp lệ" });
 
   try {
+    const currentUserId = (req as any).user?.id;
+    const user = await UserModel.findById(id);
+    
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User không tồn tại"
+      });
+    }
+
+    if (currentUserId) {
+      const currentUser = await UserModel.findById(currentUserId);
+      
+      if (currentUser?.organization_id && user.organization_id && 
+          user.organization_id !== currentUser.organization_id) {
+        return res.status(403).json({
+          success: false,
+          message: "Không có quyền xóa user này"
+        });
+      }
+
+      if (id === currentUserId) {
+        return res.status(403).json({
+          success: false,
+          message: "Không thể xóa chính mình"
+        });
+      }
+    }
+
     await UserModel.delete(id);
     res.json({ success: true, message: "User deleted" });
   } catch (err) {
