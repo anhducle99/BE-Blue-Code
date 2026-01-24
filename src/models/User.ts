@@ -21,9 +21,6 @@ export interface IUser {
   updated_at?: Date;
 }
 
-/**
- * Helper function to sanitize user object - removes password and ensures all fields are present
- */
 function sanitizeUser(user: any, includePassword: boolean = false): IUser {
   const sanitized: IUser = {
     id: user.id,
