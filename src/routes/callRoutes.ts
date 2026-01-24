@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { CallLogModel } from "../models/CallLog";
-import { getIO, onlineUsers, callTimers, normalizeName } from "../socketStore";
+import { getIO, onlineUsers, callTimers, normalizeName, emitCallLogCreated, emitCallLogUpdated } from "../socketStore";
 import { randomUUID } from "crypto";
 import { authMiddleware } from "../middleware/authMiddleware";
 import { validateCallPermission } from "../middleware/validateCallPermission";
@@ -112,12 +112,7 @@ router.post("/", authMiddleware, validateCallPermission, async (req, res) => {
         rejected_at: callLog.rejected_at,
       };
 
-      if (organizationId) {
-        const roomName = `organization_${organizationId}`;
-        io.to(roomName).emit("callLogCreated", callLogData);
-      } else {
-        io.emit("callLogCreated", callLogData);
-      }
+      emitCallLogCreated(callLogData, organizationId);
     });
 
 
@@ -198,7 +193,6 @@ router.post("/:callId/cancel", authMiddleware, async (req, res) => {
       });
     }
 
-    // Validate quyền: chỉ sender mới được hủy
     const normalizedFrom = normalizeName(fromDept);
     const normalizedSender = normalizeName(callLog.fromUser);
     
@@ -209,7 +203,6 @@ router.post("/:callId/cancel", authMiddleware, async (req, res) => {
       });
     }
 
-    // Chỉ hủy nếu status vẫn là pending
     if (callLog.status !== "pending") {
       return res.status(400).json({
         success: false,
@@ -217,14 +210,12 @@ router.post("/:callId/cancel", authMiddleware, async (req, res) => {
       });
     }
 
-    // Dừng timer nếu có
     const timer = callTimers.get(callId);
     if (timer) {
       clearTimeout(timer);
       callTimers.delete(callId);
     }
 
-    // Cập nhật tất cả call logs với cùng callId thành "cancelled"
     const updated = await prisma.callLog.updateMany({
       where: {
         callId,
@@ -243,15 +234,12 @@ router.post("/:callId/cancel", authMiddleware, async (req, res) => {
       });
     }
 
-    // Lấy updated logs để emit
     const updatedLogs = await prisma.callLog.findMany({
       where: { callId },
     });
 
-    // Emit socket events
     const io = getIO();
     if (io) {
-      // Lấy organizationId để emit đúng room
       let senderUser = null;
       const fromUserId = parseInt(callLog.fromUser);
       if (!isNaN(fromUserId)) {
@@ -280,8 +268,14 @@ router.post("/:callId/cancel", authMiddleware, async (req, res) => {
 
       const organizationId = senderUser?.organization_id || receiverUser?.organization_id;
 
-      // Emit callStatusUpdate cho mỗi updated log
+      const emittedLogIds = new Set<number>();
+      
       updatedLogs.forEach((log) => {
+        if (emittedLogIds.has(log.id)) {
+          return;
+        }
+        emittedLogIds.add(log.id);
+
         const callLogData = {
           id: log.id,
           call_id: log.callId,
@@ -295,20 +289,22 @@ router.post("/:callId/cancel", authMiddleware, async (req, res) => {
           rejected_at: log.rejectedAt || undefined,
         };
 
-        // Emit callStatusUpdate
-        io.emit("callStatusUpdate", {
-          callId,
-          toDept: log.toUser,
-          status: "cancelled",
-        });
-
-        // Broadcast callLogUpdated
         if (organizationId) {
           const roomName = `organization_${organizationId}`;
-          io.to(roomName).emit("callLogUpdated", callLogData);
+          io.to(roomName).emit("callStatusUpdate", {
+            callId,
+            toDept: log.toUser,
+            status: "cancelled",
+          });
         } else {
-          io.emit("callLogUpdated", callLogData);
+          io.emit("callStatusUpdate", {
+            callId,
+            toDept: log.toUser,
+            status: "cancelled",
+          });
         }
+
+        emitCallLogUpdated(callLogData, organizationId ?? undefined);
       });
     }
 

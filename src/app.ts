@@ -7,7 +7,7 @@ import http from "http";
 import { networkInterfaces } from "os";
 import { CallLogModel } from "./models/CallLog";
 import { Server as SocketServer } from "socket.io";
-import { onlineUsers, setIO, callTimers, normalizeName, findSocketByDepartmentName } from "./socketStore";
+import { onlineUsers, setIO, callTimers, normalizeName, findSocketByDepartmentName, emitCallLogUpdated } from "./socketStore";
 import callRoutes from "./routes/callRoutes";
 import authRoutes from "./routes/authRoutes";
 import departmentRoutes from "./routes/departmentRoutes";
@@ -219,11 +219,12 @@ io.on("connection", (socket) => {
 
         if (organizationId) {
           const roomName = `organization_${organizationId}`;
-          io.to(roomName).emit("callLogUpdated", callLogData);
+          io.to(roomName).emit("callStatusUpdate", { callId, toDept, status: "accepted" });
         } else {
-          io.emit("callLogUpdated", callLogData);
+          io.emit("callStatusUpdate", { callId, toDept, status: "accepted" });
         }
-        io.emit("callStatusUpdate", { callId, toDept, status: "accepted" });
+
+        emitCallLogUpdated(callLogData, organizationId ?? undefined);
       }
     } catch (err) {
     }
@@ -285,11 +286,12 @@ io.on("connection", (socket) => {
 
         if (organizationId) {
           const roomName = `organization_${organizationId}`;
-          io.to(roomName).emit("callLogUpdated", callLogData);
+          io.to(roomName).emit("callStatusUpdate", { callId, toDept, status: "rejected" });
         } else {
-          io.emit("callLogUpdated", callLogData);
+          io.emit("callStatusUpdate", { callId, toDept, status: "rejected" });
         }
-        io.emit("callStatusUpdate", { callId, toDept, status: "rejected" });
+
+        emitCallLogUpdated(callLogData, organizationId ?? undefined);
       }
     } catch (err) {
     }
@@ -297,7 +299,7 @@ io.on("connection", (socket) => {
 
   socket.on("callTimeout", async ({ callId, toDept }) => {
     try {
-      const updatedLog = await CallLogModel.updateStatus(callId, toDept, "unreachable");
+      const updatedLog = await CallLogModel.updateStatus(callId, toDept, "timeout");
       if (updatedLog) {
         const timer = callTimers.get(callId);
         if (timer) {
@@ -351,11 +353,12 @@ io.on("connection", (socket) => {
 
         if (organizationId) {
           const roomName = `organization_${organizationId}`;
-          io.to(roomName).emit("callLogUpdated", callLogData);
+          io.to(roomName).emit("callStatusUpdate", { callId, toDept, status: "timeout" });
         } else {
-          io.emit("callLogUpdated", callLogData);
+          io.emit("callStatusUpdate", { callId, toDept, status: "timeout" });
         }
-        io.emit("callStatusUpdate", { callId, toDept, status: "unreachable" });
+
+        emitCallLogUpdated(callLogData, organizationId ?? undefined);
       }
     } catch (err) {
     }
@@ -387,7 +390,6 @@ io.on("connection", (socket) => {
       const pendingLogs = callLogs.filter(log => log.status === "pending");
       
       if (pendingLogs.length === 0) {
-        console.log(`Call ${callId} already processed, cannot cancel`);
         return;
       }
 
@@ -457,14 +459,33 @@ io.on("connection", (socket) => {
           }
         });
 
-   
-        socket.emit("callStatusUpdate", {
-          callId,
-          toDept: targetNames[0] || firstCallLog.toUser,
-          status: "cancelled", 
-        });
+        if (organizationId) {
+          const roomName = `organization_${organizationId}`;
+          targetNames.forEach((target: string) => {
+            io.to(roomName).emit("callStatusUpdate", {
+              callId,
+              toDept: target,
+              status: "cancelled",
+            });
+          });
+        } else {
+          targetNames.forEach((target: string) => {
+            io.emit("callStatusUpdate", {
+              callId,
+              toDept: target,
+              status: "cancelled",
+            });
+          });
+        }
 
+        const emittedLogIds = new Set<number>();
+        
         updatedLogs.forEach((log) => {
+          if (emittedLogIds.has(log.id)) {
+            return;
+          }
+          emittedLogIds.add(log.id);
+
           const callLogData = {
             id: log.id,
             call_id: log.callId,
@@ -478,15 +499,9 @@ io.on("connection", (socket) => {
             rejected_at: log.rejectedAt || undefined,
           };
 
-          if (organizationId) {
-            const roomName = `organization_${organizationId}`;
-            io.to(roomName).emit("callLogUpdated", callLogData);
-          } else {
-            io.emit("callLogUpdated", callLogData);
-          }
+          emitCallLogUpdated(callLogData, organizationId);
         });
 
-        console.log(`Call ${callId} cancelled by ${from}, ${updated.count} logs updated`);
       }
     } catch (error: any) {
       socket.emit("error", { message: "Failed to cancel call" });
