@@ -459,9 +459,9 @@ export const getGroupStats = async (req: Request, res: Response) => {
 
     const groupMap: Record<string, { sent: number; received: number }> = {};
     departments.forEach((dept: any) => {
-      const groupName = (dept.alertGroup || dept.alert_group || "Khác").trim();
-      if (!groupMap[groupName]) {
-        groupMap[groupName] = { sent: 0, received: 0 };
+      const deptName = dept.name.trim();
+      if (!groupMap[deptName]) {
+        groupMap[deptName] = { sent: 0, received: 0 };
       }
     });
     const orgDeptIdsSet = new Set(departments.map((d: any) => d.id));
@@ -499,7 +499,7 @@ export const getGroupStats = async (req: Request, res: Response) => {
         return;
       }
 
-      const groupName = (receiverDept.alertGroup || receiverDept.alert_group || "Khác").trim();
+      const groupName = receiverDept.name.trim();
       if (!groupMap[groupName]) {
         groupMap[groupName] = { sent: 0, received: 0 };
       }
