@@ -28,7 +28,12 @@ export const getDepartments = async (req: Request, res: Response) => {
 };
 
 export const getDepartment = async (req: Request, res: Response) => {
-  const id = parseInt(req.params.id);
+  const id = parseInt(req.params.id, 10);
+  if (isNaN(id)) {
+    return res
+      .status(400)
+      .json({ success: false, message: "ID department không hợp lệ" });
+  }
   const dept = await DepartmentModel.findById(id);
   if (!dept)
     return res
@@ -79,7 +84,12 @@ export const createDepartment = async (req: Request, res: Response) => {
 
 export const updateDepartment = async (req: Request, res: Response) => {
   try {
-    const id = parseInt(req.params.id);
+    const id = parseInt(req.params.id, 10);
+    if (isNaN(id)) {
+      return res
+        .status(400)
+        .json({ success: false, message: "ID department không hợp lệ" });
+    }
     const { name, phone, alert_group, organization_id } = req.body;
     const existingDept = await DepartmentModel.findById(id);
     if (!existingDept) {

@@ -50,6 +50,7 @@ export class DepartmentModel {
   }
 
   static async findById(id: number): Promise<IDepartment | null> {
+    if (id == null || (typeof id === "number" && isNaN(id))) return null;
     const department = await prisma.department.findUnique({
       where: { id },
     });
