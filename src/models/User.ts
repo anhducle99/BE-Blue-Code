@@ -124,7 +124,7 @@ export class UserModel {
         organizationId: organization_id,
         isDepartmentAccount: is_department_account,
         isAdminView: is_admin_view,
-        ...(is_floor_account !== undefined && { isFloorAccount: is_floor_account }),
+        isFloorAccount: is_floor_account ?? false,
       },
       include: {
         department: { select: { name: true } },

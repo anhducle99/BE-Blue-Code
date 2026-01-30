@@ -103,6 +103,7 @@ export const login = async (req: Request, res: Response) => {
       organization_name: userForResponse.organization_name,
       is_department_account: userForResponse.is_department_account,
       is_admin_view: userForResponse.is_admin_view,
+      is_floor_account: userForResponse.is_floor_account,
       created_at: userForResponse.created_at,
       updated_at: userForResponse.updated_at,
     };

@@ -73,6 +73,7 @@ export const createUser = async (req: Request, res: Response) => {
       department_id,
       is_department_account,
       is_admin_view,
+      is_floor_account,
     } = req.body;
 
     if (!email || !password) {
@@ -139,6 +140,7 @@ export const createUser = async (req: Request, res: Response) => {
       department_id,
       is_department_account: is_department_account ?? false,
       is_admin_view: is_admin_view ?? false,
+      is_floor_account: is_floor_account ?? false,
     });
 
     res.status(201).json({ success: true, data: user });
