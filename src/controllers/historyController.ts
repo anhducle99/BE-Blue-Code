@@ -5,6 +5,7 @@ import { UserModel } from "../models/User";
 export const getCallHistory = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user?.id;
+    const userRole = (req as any).user?.role;
 
     if (!userId) {
       return res.status(401).json({
@@ -15,14 +16,14 @@ export const getCallHistory = async (req: Request, res: Response) => {
 
     const user = await UserModel.findById(userId);
 
-    if (!user || !user.organization_id) {
-      return res.status(403).json({
+    if (!user) {
+      return res.status(401).json({
         success: false,
-        message: "User không thuộc organization nào"
+        message: "User không tồn tại"
       });
     }
 
-    const { sender, receiver, startDate, endDate } = req.query;
+    const { sender, receiver, startDate, endDate, organization_id: queryOrgId } = req.query;
 
     if (startDate && isNaN(Date.parse(startDate as string))) {
       return res.status(400).json({
@@ -38,15 +39,33 @@ export const getCallHistory = async (req: Request, res: Response) => {
       });
     }
 
-    const logs = await CallLogModel.findByOrganization(
-      user.organization_id,
-      {
-        sender: sender as string | undefined,
-        receiver: receiver as string | undefined,
-        startDate: startDate as string | undefined,
-        endDate: endDate as string | undefined,
+    const filters = {
+      sender: sender as string | undefined,
+      receiver: receiver as string | undefined,
+      startDate: startDate as string | undefined,
+      endDate: endDate as string | undefined,
+    };
+
+    let logs;
+    if (userRole === "SuperAdmin") {
+      const orgId = queryOrgId ? parseInt(queryOrgId as string) : undefined;
+      if (orgId && !isNaN(orgId)) {
+        logs = await CallLogModel.findByOrganization(orgId, filters);
+      } else {
+        logs = await CallLogModel.findByFilters(filters);
       }
-    );
+    } else {
+      if (!user.organization_id) {
+        return res.status(403).json({
+          success: false,
+          message: "User không thuộc organization nào"
+        });
+      }
+      logs = await CallLogModel.findByOrganization(
+        user.organization_id,
+        filters
+      );
+    }
 
     const result = logs.map((log) => ({
       id: log.id,
