@@ -140,7 +140,7 @@ setIO(io);
 io.on("connection", (socket) => {
   socket.on("register", async (data) => {
     const { name, department_id, department_name } = data;
-    const key = `${department_name}_${department_name}`;
+    const key = `${name}_${department_name || name}`;
     const { UserModel } = await import("./models/User");
 
     let user = await UserModel.findByEmail(name);
@@ -171,6 +171,7 @@ io.on("connection", (socket) => {
         callTimers.delete(callId);
       }
 
+ 
       const updatedLog = await CallLogModel.updateStatus(callId, toDept, "accepted");
       if (updatedLog) {
         const { UserModel } = await import("./models/User");
@@ -219,9 +220,19 @@ io.on("connection", (socket) => {
 
         if (organizationId) {
           const roomName = `organization_${organizationId}`;
-          io.to(roomName).emit("callStatusUpdate", { callId, toDept, status: "accepted" });
+          io.to(roomName).emit("callStatusUpdate", { 
+            callId, 
+            toDept: updatedLog.to_user,
+            toUser: updatedLog.to_user,
+            status: "accepted" 
+          });
         } else {
-          io.emit("callStatusUpdate", { callId, toDept, status: "accepted" });
+          io.emit("callStatusUpdate", { 
+            callId, 
+            toDept: updatedLog.to_user,
+            toUser: updatedLog.to_user,
+            status: "accepted" 
+          });
         }
 
         emitCallLogUpdated(callLogData, organizationId ?? undefined);
@@ -286,9 +297,19 @@ io.on("connection", (socket) => {
 
         if (organizationId) {
           const roomName = `organization_${organizationId}`;
-          io.to(roomName).emit("callStatusUpdate", { callId, toDept, status: "rejected" });
+          io.to(roomName).emit("callStatusUpdate", { 
+            callId, 
+            toDept: updatedLog.to_user,
+            toUser: updatedLog.to_user,
+            status: "rejected" 
+          });
         } else {
-          io.emit("callStatusUpdate", { callId, toDept, status: "rejected" });
+          io.emit("callStatusUpdate", { 
+            callId, 
+            toDept: updatedLog.to_user,
+            toUser: updatedLog.to_user,
+            status: "rejected" 
+          });
         }
 
         emitCallLogUpdated(callLogData, organizationId ?? undefined);
@@ -299,7 +320,25 @@ io.on("connection", (socket) => {
 
   socket.on("callTimeout", async ({ callId, toDept }) => {
     try {
-      const updatedLog = await CallLogModel.updateStatus(callId, toDept, "timeout");
+      const { prisma } = await import("./models/db");
+      const logs = await prisma.callLog.findMany({
+        where: { callId },
+      });
+      
+      let updatedLogs = [];
+      if (logs.length > 0) {
+        for (const log of logs) {
+          if (log.status === "pending") {
+            const updated = await CallLogModel.updateStatus(callId, log.toUser, "timeout");
+            if (updated) updatedLogs.push(updated);
+          }
+        }
+      } else {
+        const updatedLog = await CallLogModel.updateStatus(callId, toDept, "timeout");
+        if (updatedLog) updatedLogs.push(updatedLog);
+      }
+      
+      const updatedLog = updatedLogs.length > 0 ? updatedLogs[0] : null;
       if (updatedLog) {
         const timer = callTimers.get(callId);
         if (timer) {
@@ -353,9 +392,19 @@ io.on("connection", (socket) => {
 
         if (organizationId) {
           const roomName = `organization_${organizationId}`;
-          io.to(roomName).emit("callStatusUpdate", { callId, toDept, status: "timeout" });
+          io.to(roomName).emit("callStatusUpdate", { 
+            callId, 
+            toDept: updatedLog.to_user,
+            toUser: updatedLog.to_user,
+            status: "timeout" 
+          });
         } else {
-          io.emit("callStatusUpdate", { callId, toDept, status: "timeout" });
+          io.emit("callStatusUpdate", { 
+            callId, 
+            toDept: updatedLog.to_user,
+            toUser: updatedLog.to_user,
+            status: "timeout" 
+          });
         }
 
         emitCallLogUpdated(callLogData, organizationId ?? undefined);
