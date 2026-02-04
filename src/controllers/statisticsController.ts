@@ -36,6 +36,7 @@ export const getDepartmentStats = async (req: Request, res: Response) => {
 
   try {
     const userId = (req as any).user?.id;
+    const userRole = (req as any).user?.role;
     if (!userId) {
       return res.status(401).json({
         success: false,
@@ -45,14 +46,21 @@ export const getDepartmentStats = async (req: Request, res: Response) => {
 
     const { UserModel } = await import("../models/User");
     const user = await UserModel.findById(userId);
-    if (!user || !user.organization_id) {
-      return res.status(403).json({
-        success: false,
-        message: "User không thuộc organization nào",
-      });
-    }
+    const queryOrgId = req.query.organization_id as string | undefined;
+    let organizationId: number | null = null;
 
-    const organizationId = user.organization_id;
+    if (userRole === "SuperAdmin" && queryOrgId) {
+      const parsed = parseInt(queryOrgId, 10);
+      organizationId = !isNaN(parsed) ? parsed : null;
+    } else if (userRole !== "SuperAdmin") {
+      if (!user || !user.organization_id) {
+        return res.status(403).json({
+          success: false,
+          message: "User không thuộc organization nào",
+        });
+      }
+      organizationId = user.organization_id;
+    }
 
     const { start, end } = getUTCDateRangeVN(
       startDate as string,
@@ -67,17 +75,16 @@ export const getDepartmentStats = async (req: Request, res: Response) => {
     allDepartmentsInDB.forEach((d: any) => {
     });
     
+    const deptWhere = organizationId != null ? { organizationId } : {};
     try {
       departments = await prisma.department.findMany({
-        where: {
-          organizationId: organizationId, 
-        } as any,  
+        where: deptWhere as any,
         orderBy: { id: "asc" },
       });
     } catch (err: any) {
     }
 
-    if (departments.length === 0) {
+    if (departments.length === 0 && organizationId != null) {
       const orgUsersForDepts = await prisma.user.findMany({
         where: { organizationId },
         select: { departmentId: true, name: true },
@@ -110,8 +117,9 @@ export const getDepartmentStats = async (req: Request, res: Response) => {
     departments.forEach((d: any) => {
     });
 
+    const orgUsersWhere = organizationId != null ? { organizationId } : {};
     const orgUsers = await prisma.user.findMany({
-      where: { organizationId },
+      where: orgUsersWhere as any,
       select: {
         id: true,
         name: true,
@@ -130,17 +138,20 @@ export const getDepartmentStats = async (req: Request, res: Response) => {
     const orgDeptNames = departments.map((d) => d.name);
     const allOrgIdentifiers = [...orgUserNames, ...orgDeptNames];
 
-    const logs = await prisma.callLog.findMany({
-      where: {
-        OR: [
-          { fromUser: { in: allOrgIdentifiers } },
-          { toUser: { in: allOrgIdentifiers } },
-        ],
-        createdAt: {
-          gte: new Date(start),
-          lte: new Date(end),
-        },
+    const logsWhere: any = {
+      createdAt: {
+        gte: new Date(start),
+        lte: new Date(end),
       },
+    };
+    if (allOrgIdentifiers.length > 0) {
+      logsWhere.OR = [
+        { fromUser: { in: allOrgIdentifiers } },
+        { toUser: { in: allOrgIdentifiers } },
+      ];
+    }
+    const logs = await prisma.callLog.findMany({
+      where: logsWhere,
     });
 
     const allUsers = orgUsers;
@@ -308,6 +319,7 @@ export const getGroupStats = async (req: Request, res: Response) => {
 
   try {
     const userId = (req as any).user?.id;
+    const userRole = (req as any).user?.role;
     if (!userId) {
       return res.status(401).json({
         success: false,
@@ -317,38 +329,46 @@ export const getGroupStats = async (req: Request, res: Response) => {
 
     const { UserModel } = await import("../models/User");
     const user = await UserModel.findById(userId);
-    if (!user || !user.organization_id) {
-      return res.status(403).json({
-        success: false,
-        message: "User không thuộc organization nào",
-      });
-    }
+    const queryOrgId = req.query.organization_id as string | undefined;
+    let organizationId: number | null = null;
 
-    const organizationId = user.organization_id;
+    if (userRole === "SuperAdmin" && queryOrgId) {
+      const parsed = parseInt(queryOrgId, 10);
+      organizationId = !isNaN(parsed) ? parsed : null;
+    } else if (userRole !== "SuperAdmin") {
+      if (!user || !user.organization_id) {
+        return res.status(403).json({
+          success: false,
+          message: "User không thuộc organization nào",
+        });
+      }
+      organizationId = user.organization_id;
+    }
 
     const { start, end } = getUTCDateRangeVN(
       startDate as string,
       endDate as string
     );
 
-    const organization = await prisma.organization.findUnique({
-      where: { id: organizationId },
-      select: { name: true },
-    });
-    const organizationName = organization?.name || `Organization ${organizationId}`;
+    const organization = organizationId != null
+      ? await prisma.organization.findUnique({
+          where: { id: organizationId },
+          select: { name: true },
+        })
+      : null;
+    const organizationName = organization?.name || (organizationId != null ? `Organization ${organizationId}` : "Toàn hệ thống");
     let departments: any[] = [];
     
+    const groupDeptWhere = organizationId != null ? { organizationId } : {};
     try {
       departments = await prisma.department.findMany({
-        where: {
-          organizationId: organizationId,
-        } as any,
+        where: groupDeptWhere as any,
         orderBy: { id: "asc" },
       });
     } catch (err) {
     }
 
-    if (departments.length === 0) {
+    if (departments.length === 0 && organizationId != null) {
       const orgUsersForDepts = await prisma.user.findMany({
         where: { organizationId },
         select: { departmentId: true },
@@ -372,8 +392,9 @@ export const getGroupStats = async (req: Request, res: Response) => {
       }
     }
 
+    const groupOrgUsersWhere = organizationId != null ? { organizationId } : {};
     const orgUsers = await prisma.user.findMany({
-      where: { organizationId },
+      where: groupOrgUsersWhere as any,
       select: {
         id: true,
         name: true,
@@ -392,17 +413,20 @@ export const getGroupStats = async (req: Request, res: Response) => {
     const orgDeptNames = departments.map((d) => d.name);
     const allOrgIdentifiers = [...orgUserNames, ...orgDeptNames];
 
-    const logs = await prisma.callLog.findMany({
-      where: {
-        OR: [
-          { fromUser: { in: allOrgIdentifiers } },
-          { toUser: { in: allOrgIdentifiers } },
-        ],
-        createdAt: {
-          gte: new Date(start),
-          lte: new Date(end),
-        },
+    const groupLogsWhere: any = {
+      createdAt: {
+        gte: new Date(start),
+        lte: new Date(end),
       },
+    };
+    if (allOrgIdentifiers.length > 0) {
+      groupLogsWhere.OR = [
+        { fromUser: { in: allOrgIdentifiers } },
+        { toUser: { in: allOrgIdentifiers } },
+      ];
+    }
+    const logs = await prisma.callLog.findMany({
+      where: groupLogsWhere,
     });
 
     const allUsers = orgUsers;

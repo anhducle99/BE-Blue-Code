@@ -5,9 +5,10 @@ import { prisma } from "../models/db";
 export const getDepartments = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user?.id;
+    const userRole = (req as any).user?.role;
     let organizationId: number | undefined = undefined;
     
-    if (userId) {
+    if (userRole !== "SuperAdmin" && userId) {
       const { UserModel } = await import("../models/User");
       const user = await UserModel.findById(userId);
       if (user?.organization_id) {
@@ -17,7 +18,8 @@ export const getDepartments = async (req: Request, res: Response) => {
     
     const queryOrgId = req.query.organization_id;
     if (queryOrgId) {
-      organizationId = parseInt(queryOrgId as string);
+      const parsed = parseInt(queryOrgId as string);
+      if (!isNaN(parsed)) organizationId = parsed;
     }
     
     const departments = await DepartmentModel.findAll(organizationId);

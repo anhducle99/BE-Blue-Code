@@ -5,9 +5,10 @@ import bcrypt from "bcrypt";
 export const getUsers = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user?.id;
+    const userRole = (req as any).user?.role;
     let organizationId: number | undefined = undefined;
 
-    if (userId) {
+    if (userRole !== "SuperAdmin" && userId) {
       const user = await UserModel.findById(userId);
       if (user?.organization_id) {
         organizationId = user.organization_id;
@@ -16,7 +17,8 @@ export const getUsers = async (req: Request, res: Response) => {
 
     const queryOrgId = req.query.organization_id;
     if (queryOrgId) {
-      organizationId = parseInt(queryOrgId as string);
+      const parsed = parseInt(queryOrgId as string);
+      if (!isNaN(parsed)) organizationId = parsed;
     }
 
     const users = await UserModel.findAll(organizationId);
@@ -42,7 +44,7 @@ export const getUser = async (req: Request, res: Response) => {
       });
     }
 
-    if (currentUserId) {
+    if (currentUserId && (req as any).user?.role !== "SuperAdmin") {
       const currentUser = await UserModel.findById(currentUserId);
       
       if (currentUser?.organization_id && user.organization_id && 
@@ -83,15 +85,16 @@ export const createUser = async (req: Request, res: Response) => {
       });
     }
 
+    const isSuperAdmin = (req as any).user?.role === "SuperAdmin";
     let userOrganizationId: number | undefined = undefined;
-    if (currentUserId) {
+    if (!isSuperAdmin && currentUserId) {
       const currentUser = await UserModel.findById(currentUserId);
       if (currentUser?.organization_id) {
         userOrganizationId = currentUser.organization_id;
       }
     }
 
-    if (organization_id !== undefined && organization_id !== null) {
+    if (!isSuperAdmin && organization_id !== undefined && organization_id !== null) {
       if (userOrganizationId && organization_id !== userOrganizationId) {
         return res.status(403).json({
           success: false,
@@ -111,7 +114,7 @@ export const createUser = async (req: Request, res: Response) => {
         });
       }
 
-      if (userOrganizationId && department.organization_id && 
+      if (!isSuperAdmin && userOrganizationId && department.organization_id && 
           department.organization_id !== userOrganizationId) {
         return res.status(403).json({
           success: false,
@@ -128,7 +131,7 @@ export const createUser = async (req: Request, res: Response) => {
       });
     }
 
-    const finalOrgId = userOrganizationId || organization_id || undefined;
+    const finalOrgId = isSuperAdmin ? (organization_id ?? undefined) : (userOrganizationId || organization_id || undefined);
 
     const user: IUser = await UserModel.create({
       name,
@@ -165,7 +168,7 @@ export const updateUser = async (req: Request, res: Response) => {
       });
     }
 
-    if (currentUserId) {
+    if (currentUserId && (req as any).user?.role !== "SuperAdmin") {
       const currentUser = await UserModel.findById(currentUserId);
       
       if (currentUser?.organization_id && existingUser.organization_id && 
@@ -180,8 +183,9 @@ export const updateUser = async (req: Request, res: Response) => {
     const { organization_id, department_id, ...restBody } = req.body;
     const updateData: Partial<IUser> = { ...restBody };
 
+    const isSuperAdminUpdate = (req as any).user?.role === "SuperAdmin";
     if (organization_id !== undefined && organization_id !== null) {
-      if (currentUserId) {
+      if (!isSuperAdminUpdate && currentUserId) {
         const currentUser = await UserModel.findById(currentUserId);
         
         if (currentUser?.organization_id && organization_id !== currentUser.organization_id) {
@@ -199,7 +203,7 @@ export const updateUser = async (req: Request, res: Response) => {
       const department = await DepartmentModel.findById(department_id);
       
       if (department) {
-        if (currentUserId) {
+        if (!isSuperAdminUpdate && currentUserId) {
           const currentUser = await UserModel.findById(currentUserId);
           
           if (currentUser?.organization_id && department.organization_id && 
@@ -241,7 +245,7 @@ export const deleteUser = async (req: Request, res: Response) => {
       });
     }
 
-    if (currentUserId) {
+    if (currentUserId && (req as any).user?.role !== "SuperAdmin") {
       const currentUser = await UserModel.findById(currentUserId);
       
       if (currentUser?.organization_id && user.organization_id && 
@@ -258,6 +262,11 @@ export const deleteUser = async (req: Request, res: Response) => {
           message: "Không thể xóa chính mình"
         });
       }
+    } else if (currentUserId && id === currentUserId) {
+      return res.status(403).json({
+        success: false,
+        message: "Không thể xóa chính mình"
+      });
     }
 
     await UserModel.delete(id);
