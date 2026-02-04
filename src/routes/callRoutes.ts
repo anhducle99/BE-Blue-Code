@@ -73,27 +73,92 @@ router.post("/", authMiddleware, validateCallPermission, async (req, res) => {
     const createdLogs: any[] = [];
 
     for (const key of targetKeys) {
-      const targetUser = onlineUsers.get(key);
+      const targetName = key.split("_")[0];
+      const normalizedTargetName = normalizeName(targetName);      
+      const isDepartment = orgDepartments.some(
+        (dept) => normalizeName(dept.name) === normalizedTargetName || dept.name.trim() === targetName
+      );
 
-      const callLog = await CallLogModel.create({
-        call_id: callId,
-        from_user: fromDept,
-        to_user: key.split("_")[0],
-        message: message || undefined,
-        image_url: image_url || undefined,
-        status: "pending",
-      });
+   
 
-      createdLogs.push(callLog);
+      if (isDepartment) {
+        const department = orgDepartments.find(
+          (dept) => normalizeName(dept.name) === normalizedTargetName || dept.name.trim() === targetName
+        );
+        
+        
+        if (department) {
+         
+          
+          const departmentUsers = orgUsers.filter(
+            (u) => {
+              const deptIdMatch = u.department_id === department.id || 
+                                  u.department_id === Number(department.id) ||
+                                  Number(u.department_id) === department.id ||
+                                  String(u.department_id) === String(department.id);
+            
+              const matches = deptIdMatch && u.department_id != null;
+              return matches;
+            }
+          );
 
-      if (targetUser) {
-        io.to(targetUser.socketId).emit("incomingCall", {
-          callId,
-          fromDept,
-          toDept: targetUser.department_name,
-          message,
-          image_url,
+          
+
+          for (const deptUser of departmentUsers) {
+          
+            const userKey = `${deptUser.name}_${deptUser.department_name || deptUser.name}`;
+            const targetUser = onlineUsers.get(userKey);
+
+            if (targetUser) {
+            } else {
+            }
+
+            const callLog = await CallLogModel.create({
+              call_id: callId,
+              from_user: fromDept,
+              to_user: deptUser.name,
+              message: message || undefined,
+              image_url: image_url || undefined,
+              status: "pending",
+            });
+
+            createdLogs.push(callLog);
+
+            if (targetUser) {
+              io.to(targetUser.socketId).emit("incomingCall", {
+                callId,
+                fromDept,
+                toDept: targetUser.department_name,
+                message,
+                image_url,
+              });
+            } else {
+            }
+          }
+        }
+      } else {
+        const targetUser = onlineUsers.get(key);
+
+        const callLog = await CallLogModel.create({
+          call_id: callId,
+          from_user: fromDept,
+          to_user: targetName,
+          message: message || undefined,
+          image_url: image_url || undefined,
+          status: "pending",
         });
+
+        createdLogs.push(callLog);
+
+        if (targetUser) {
+          io.to(targetUser.socketId).emit("incomingCall", {
+            callId,
+            fromDept,
+            toDept: targetUser.department_name,
+            message,
+            image_url,
+          });
+        }
       }
     }
 
