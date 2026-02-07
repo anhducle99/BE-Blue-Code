@@ -11,8 +11,8 @@ import { requireSuperAdmin } from "../middleware/roleMiddleware";
 
 const router = Router();
 
-router.get("/", getOrganizations);
-router.get("/:id", getOrganization);
+router.get("/", authMiddleware, getOrganizations);
+router.get("/:id", authMiddleware, getOrganization);
 router.post("/", authMiddleware, requireSuperAdmin, createOrganization);
 router.put("/:id", updateOrganization);
 router.delete("/:id", deleteOrganization);

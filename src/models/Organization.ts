@@ -8,8 +8,9 @@ export interface IOrganization {
 }
 
 export class OrganizationModel {
-  static async findAll(): Promise<IOrganization[]> {
+  static async findAll(organizationId?: number): Promise<IOrganization[]> {
     const organizations = await prisma.organization.findMany({
+      where: organizationId != null ? { id: organizationId } : undefined,
       orderBy: { id: "asc" },
     });
 

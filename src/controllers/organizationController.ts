@@ -1,8 +1,16 @@
 import { Request, Response } from "express";
 import { OrganizationModel } from "../models/Organization";
+import { UserModel } from "../models/User";
 
 export const getOrganizations = async (req: Request, res: Response) => {
-  const orgs = await OrganizationModel.findAll();
+  const jwtUser = (req as any).user;
+  const isSuperAdmin = jwtUser?.role === "SuperAdmin";
+  let organizationId: number | undefined = undefined;
+  if (!isSuperAdmin && jwtUser?.id) {
+    const user = await UserModel.findById(jwtUser.id);
+    if (user?.organization_id != null) organizationId = user.organization_id;
+  }
+  const orgs = await OrganizationModel.findAll(organizationId);
   res.json({ success: true, data: orgs });
 };
 

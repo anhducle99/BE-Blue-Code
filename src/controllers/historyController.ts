@@ -48,8 +48,10 @@ export const getCallHistory = async (req: Request, res: Response) => {
 
     let logs;
     if (userRole === "SuperAdmin") {
-      const orgId = queryOrgId ? parseInt(queryOrgId as string) : undefined;
-      if (orgId && !isNaN(orgId)) {
+      const hasOrgFilter = queryOrgId !== undefined && queryOrgId !== null && String(queryOrgId).trim() !== "";
+      const parsed = hasOrgFilter ? parseInt(String(queryOrgId), 10) : NaN;
+      const orgId = !isNaN(parsed) ? parsed : undefined;
+      if (orgId !== undefined) {
         logs = await CallLogModel.findByOrganization(orgId, filters);
       } else {
         logs = await CallLogModel.findByFilters(filters);
