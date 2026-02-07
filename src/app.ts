@@ -123,7 +123,6 @@ const io = new SocketServer(server, {
         return callback(null, true);
       }
 
-      console.warn(`CORS blocked origin: ${origin}`);
       callback(new Error("Not allowed by CORS"));
     },
     credentials: true,
@@ -421,7 +420,6 @@ io.on("connection", (socket) => {
       });
 
       if (callLogs.length === 0) {
-        console.warn(`Call ${callId} not found`);
         socket.emit("error", { message: "Call not found" });
         return;
       }
