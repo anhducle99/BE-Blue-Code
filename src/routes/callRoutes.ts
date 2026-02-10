@@ -335,7 +335,8 @@ router.post("/:callId/cancel", authMiddleware, async (req, res) => {
 
       const emittedLogIds = new Set<number>();
       
-      updatedLogs.forEach((log) => {
+      type CallLogRow = { id: number; callId: string; fromUser: string; toUser: string; message?: string | null; imageUrl?: string | null; status: string; createdAt: Date; acceptedAt?: Date | null; rejectedAt?: Date | null };
+      updatedLogs.forEach((log: CallLogRow) => {
         if (emittedLogIds.has(log.id)) {
           return;
         }
