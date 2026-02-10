@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { CallLogModel } from "../models/CallLog";
+import { IncidentCaseModel } from "../models/IncidentCase";
 import { getIO, onlineUsers, callTimers, normalizeName, emitCallLogCreated, emitCallLogUpdated } from "../socketStore";
 import { randomUUID } from "crypto";
 import { authMiddleware } from "../middleware/authMiddleware";
@@ -162,8 +163,13 @@ router.post("/", authMiddleware, validateCallPermission, async (req, res) => {
       }
     }
 
+    const receiverNames = [...new Set(createdLogs.map((c: any) => c.to_user?.trim()).filter(Boolean))];
+    const callLogIds = createdLogs.map((c: any) => c.id);
+    if (receiverNames.length > 0 && callLogIds.length > 0) {
+      await IncidentCaseModel.findOrCreateAndAttach(organizationId, receiverNames, callLogIds);
+    }
 
-    createdLogs.forEach((callLog) => {
+    createdLogs.forEach((callLog: any) => {
       const callLogData = {
         id: callLog.id,
         call_id: callLog.call_id,
