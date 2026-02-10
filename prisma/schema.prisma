@@ -82,9 +82,48 @@ model CallLog {
   acceptedAt DateTime? @map("accepted_at")
   rejectedAt DateTime? @map("rejected_at")
 
+  incidentCaseCallLogs IncidentCaseCallLog[]
+
   @@index([callId])
   @@index([fromUser])
   @@index([toUser])
   @@index([createdAt])
   @@map("call_logs")
+}
+
+model IncidentCase {
+  id             Int       @id @default(autoincrement())
+  organizationId Int       @map("organization_id")
+  groupingKey    String    @map("grouping_key")  
+  reportCount    Int       @default(1)            @map("report_count")
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  callLogs       IncidentCaseCallLog[]
+
+  @@index([organizationId])
+  @@index([groupingKey])
+  @@index([createdAt])
+  @@map("incident_cases")
+}
+
+model IncidentCaseCallLog {
+  id             Int         @id @default(autoincrement())
+  incidentCaseId Int         @map("incident_case_id")
+  callLogId      Int         @unique @map("call_log_id")
+
+  incidentCase   IncidentCase @relation(fields: [incidentCaseId], references: [id], onDelete: Cascade)
+  callLog        CallLog      @relation(fields: [callLogId], references: [id], onDelete: Cascade)
+
+  @@index([incidentCaseId])
+  @@map("incident_case_call_logs")
+}
+
+
+model HandlerState {
+  id                   Int       @id @default(autoincrement())
+  handlerKey           String    @unique @map("handler_key")   
+  currentIncidentCaseId Int?     @map("current_incident_case_id")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
+
+  @@map("handler_states")
 }

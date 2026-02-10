@@ -7,7 +7,6 @@ import http from "http";
 import { networkInterfaces } from "os";
 import { CallLogModel } from "./models/CallLog";
 
-/** Kiểu một dòng call log trả về từ prisma.callLog.findMany */
 type CallLogRow = {
   id: number;
   callId: string;
@@ -29,6 +28,7 @@ import organizationRoutes from "./routes/organizationRoutes";
 import historyRoutes from "./routes/historyRoutes";
 import userRoutes from "./routes/userRoutes";
 import statisticsRoutes from "./routes/statisticsRoutes";
+import incidentCaseRoutes from "./routes/incidentCaseRoutes";
 const app = express();
 
 app.use(express.json());
@@ -82,6 +82,7 @@ app.use("/api/history", historyRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/statistics", statisticsRoutes);
 app.use("/api/call", callRoutes);
+app.use("/api/incident-cases", incidentCaseRoutes);
 
 app.use(
   (

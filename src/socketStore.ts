@@ -127,3 +127,15 @@ export const emitCallLogUpdated = (callLogData: any, organizationId?: number | n
     emittedCallLogs.delete(callLogId);
   }, 5000);
 };
+
+export const emitHandlerStatusChange = (
+  payload: { handlerKey: string; incidentCaseId: number | null; status: "available" | "handling_this_incident" | "handling_other_incident" },
+  organizationId?: number | null
+) => {
+  if (!io) return;
+  if (organizationId) {
+    io.to(`organization_${organizationId}`).emit("handlerStatusChange", payload);
+  } else {
+    io.emit("handlerStatusChange", payload);
+  }
+};
