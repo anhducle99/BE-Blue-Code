@@ -95,8 +95,8 @@ export const getDepartmentStats = async (req: Request, res: Response) => {
       const orgDepartmentIds = Array.from(
         new Set(
           orgUsersForDepts
-            .map((u) => u.departmentId)
-            .filter((id): id is number => id !== null)
+            .map((u: { departmentId: number | null }) => u.departmentId)
+            .filter((id: number | null): id is number => id !== null)
         )
       );
             
@@ -134,8 +134,8 @@ export const getDepartmentStats = async (req: Request, res: Response) => {
       },
     });
 
-    const orgUserNames = orgUsers.map((u) => u.name);
-    const orgDeptNames = departments.map((d) => d.name);
+    const orgUserNames = orgUsers.map((u: { name: string }) => u.name);
+    const orgDeptNames = departments.map((d: { name: string }) => d.name);
     const allOrgIdentifiers = [...orgUserNames, ...orgDeptNames];
 
     const logsWhere: any = {
@@ -167,7 +167,8 @@ export const getDepartmentStats = async (req: Request, res: Response) => {
       deptByNameMap.set(dept.name.toLowerCase().trim(), dept);
     });
     
-    allUsers.forEach((user) => {
+    type UserRow = { name: string; email?: string | null; departmentId?: number | null };
+    allUsers.forEach((user: UserRow) => {
       userByNameMap.set(user.name.toLowerCase().trim(), user);
       if (user.email) {
         userByEmailMap.set(user.email.toLowerCase().trim(), user);
@@ -243,7 +244,8 @@ export const getDepartmentStats = async (req: Request, res: Response) => {
     let skippedNotAccepted = 0;
     let skippedReceiverIsFloor = 0;
     
-    logs.forEach((log, index) => {
+    type CallLogRow = { fromUser: string; toUser: string; [key: string]: any };
+    logs.forEach((log: CallLogRow, index: number) => {
       const senderInfo = findUserOrDept(log.fromUser);
       const receiverInfo = findUserOrDept(log.toUser);
       
@@ -377,8 +379,8 @@ export const getGroupStats = async (req: Request, res: Response) => {
       const orgDepartmentIds = Array.from(
         new Set(
           orgUsersForDepts
-            .map((u) => u.departmentId)
-            .filter((id): id is number => id !== null)
+            .map((u: { departmentId: number | null }) => u.departmentId)
+            .filter((id: number | null): id is number => id !== null)
         )
       );
       
@@ -409,8 +411,8 @@ export const getGroupStats = async (req: Request, res: Response) => {
       },
     });
 
-    const orgUserNames = orgUsers.map((u) => u.name);
-    const orgDeptNames = departments.map((d) => d.name);
+    const orgUserNames = orgUsers.map((u: { name: string }) => u.name);
+    const orgDeptNames = departments.map((d: { name: string }) => d.name);
     const allOrgIdentifiers = [...orgUserNames, ...orgDeptNames];
 
     const groupLogsWhere: any = {
@@ -441,7 +443,8 @@ export const getGroupStats = async (req: Request, res: Response) => {
       deptByNameMap.set(dept.name.toLowerCase().trim(), dept);
     });
 
-    allUsers.forEach((user) => {
+    type UserRowGroup = { name: string; email?: string | null; departmentId?: number | null };
+    allUsers.forEach((user: UserRowGroup) => {
       userByNameMap.set(user.name.toLowerCase().trim(), user);
       if (user.email) {
         userByEmailMap.set(user.email.toLowerCase().trim(), user);
@@ -509,7 +512,8 @@ export const getGroupStats = async (req: Request, res: Response) => {
     let skippedNotAccepted = 0;
     let skippedReceiverIsFloor = 0;
     
-    logs.forEach((log, index) => {
+    type CallLogRowGroup = { fromUser: string; toUser: string; [key: string]: any };
+    logs.forEach((log: CallLogRowGroup, index: number) => {
       const senderInfo = findUserOrDept(log.fromUser);
       const receiverInfo = findUserOrDept(log.toUser);
       

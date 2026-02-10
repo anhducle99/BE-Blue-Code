@@ -6,6 +6,20 @@ import cors from "cors";
 import http from "http";
 import { networkInterfaces } from "os";
 import { CallLogModel } from "./models/CallLog";
+
+/** Kiểu một dòng call log trả về từ prisma.callLog.findMany */
+type CallLogRow = {
+  id: number;
+  callId: string;
+  fromUser: string;
+  toUser: string;
+  message: string | null;
+  imageUrl: string | null;
+  status: string;
+  createdAt: Date;
+  acceptedAt: Date | null;
+  rejectedAt: Date | null;
+};
 import { Server as SocketServer } from "socket.io";
 import { onlineUsers, setIO, callTimers, normalizeName, findSocketByDepartmentName, emitCallLogUpdated } from "./socketStore";
 import callRoutes from "./routes/callRoutes";
@@ -148,10 +162,13 @@ io.on("connection", (socket) => {
       user = allUsers.find(u => u.name === name || u.email === name) || null;
     }
 
-    if (user && user.organization_id) {
+    if (user && user.role === "SuperAdmin") {
+      const { prisma } = await import("./models/db");
+      const orgs = await prisma.organization.findMany({ select: { id: true } });
+      orgs.forEach((o: { id: number }) => socket.join(`organization_${o.id}`));
+    } else if (user && user.organization_id) {
       const roomName = `organization_${user.organization_id}`;
       socket.join(roomName);
-    } else {
     }
 
     onlineUsers.set(key, {
@@ -434,7 +451,7 @@ io.on("connection", (socket) => {
         return;
       }
 
-      const pendingLogs = callLogs.filter(log => log.status === "pending");
+      const pendingLogs = callLogs.filter((log: CallLogRow) => log.status === "pending");
       
       if (pendingLogs.length === 0) {
         return;
@@ -493,7 +510,7 @@ io.on("connection", (socket) => {
 
         const targetNames = targets && Array.isArray(targets) 
           ? targets 
-          : updatedLogs.map(log => log.toUser);
+          : updatedLogs.map((log: CallLogRow) => log.toUser);
 
         targetNames.forEach((target: string) => {
           const targetSocket = findSocketByDepartmentName(target);
@@ -527,7 +544,7 @@ io.on("connection", (socket) => {
 
         const emittedLogIds = new Set<number>();
         
-        updatedLogs.forEach((log) => {
+        updatedLogs.forEach((log: CallLogRow) => {
           if (emittedLogIds.has(log.id)) {
             return;
           }

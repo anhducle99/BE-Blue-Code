@@ -118,12 +118,12 @@ export class CallLogModel {
     const orgUserNames = new Set<string>();
     const orgDeptNames = new Set<string>();
     
-    orgUsers.forEach((u) => {
+    orgUsers.forEach((u: { name: string }) => {
       orgUserNames.add(u.name.trim());
       orgUserNames.add(this.normalizeName(u.name));
     });
     
-    orgDepartments.forEach((d) => {
+    orgDepartments.forEach((d: { name: string }) => {
       orgDeptNames.add(d.name.trim());
       orgDeptNames.add(this.normalizeName(d.name));
     });
