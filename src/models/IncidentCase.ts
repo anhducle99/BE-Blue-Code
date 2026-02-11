@@ -1,6 +1,6 @@
 import { prisma } from "./db";
 
-const INCIDENT_GROUP_WINDOW_MS = 30 * 60 * 1000; // 30 phút
+const INCIDENT_GROUP_WINDOW_MS = 1 * 60 * 1000;
 
 function normalizeName(name: string): string {
   return name
