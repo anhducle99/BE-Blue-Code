@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { CallLogModel } from "../models/CallLog";
 import { IncidentCaseModel } from "../models/IncidentCase";
+import { prisma } from "../models/db";
 import { getIO, onlineUsers, callTimers, normalizeName, emitCallLogCreated, emitCallLogUpdated } from "../socketStore";
 import { randomUUID } from "crypto";
 import { authMiddleware } from "../middleware/authMiddleware";
@@ -71,102 +72,110 @@ router.post("/", authMiddleware, validateCallPermission, async (req, res) => {
     }
 
     const callId = randomUUID();
-    const createdLogs: any[] = [];
+    type CreateEntry = { payload: Parameters<typeof CallLogModel.create>[0]; targetUser: ReturnType<typeof onlineUsers.get> };
+    const entries: CreateEntry[] = [];
 
     for (const key of targetKeys) {
       const targetName = key.split("_")[0];
-      const normalizedTargetName = normalizeName(targetName);      
+      const normalizedTargetName = normalizeName(targetName);
       const isDepartment = orgDepartments.some(
         (dept) => normalizeName(dept.name) === normalizedTargetName || dept.name.trim() === targetName
       );
-
-   
 
       if (isDepartment) {
         const department = orgDepartments.find(
           (dept) => normalizeName(dept.name) === normalizedTargetName || dept.name.trim() === targetName
         );
-        
-        
         if (department) {
-         
-          
           const departmentUsers = orgUsers.filter(
             (u) => {
-              const deptIdMatch = u.department_id === department.id || 
-                                  u.department_id === Number(department.id) ||
-                                  Number(u.department_id) === department.id ||
-                                  String(u.department_id) === String(department.id);
-            
-              const matches = deptIdMatch && u.department_id != null;
-              return matches;
+              const deptIdMatch = u.department_id === department.id ||
+                  u.department_id === Number(department.id) ||
+                  Number(u.department_id) === department.id ||
+                  String(u.department_id) === String(department.id);
+              return deptIdMatch && u.department_id != null;
             }
           );
-
-          
-
           for (const deptUser of departmentUsers) {
-          
             const userKey = `${deptUser.name}_${deptUser.department_name || deptUser.name}`;
             const targetUser = onlineUsers.get(userKey);
-
-            if (targetUser) {
-            } else {
-            }
-
-            const callLog = await CallLogModel.create({
-              call_id: callId,
-              from_user: fromDept,
-              to_user: deptUser.name,
-              message: message || undefined,
-              image_url: image_url || undefined,
-              status: "pending",
+            entries.push({
+              payload: {
+                call_id: callId,
+                from_user: fromDept,
+                to_user: deptUser.name,
+                message: message || undefined,
+                image_url: image_url || undefined,
+                status: "pending",
+              },
+              targetUser: targetUser ?? undefined,
             });
-
-            createdLogs.push(callLog);
-
-            if (targetUser) {
-              io.to(targetUser.socketId).emit("incomingCall", {
-                callId,
-                fromDept,
-                toDept: targetUser.department_name,
-                message,
-                image_url,
-              });
-            } else {
-            }
           }
         }
       } else {
         const targetUser = onlineUsers.get(key);
-
-        const callLog = await CallLogModel.create({
-          call_id: callId,
-          from_user: fromDept,
-          to_user: targetName,
-          message: message || undefined,
-          image_url: image_url || undefined,
-          status: "pending",
+        entries.push({
+          payload: {
+            call_id: callId,
+            from_user: fromDept,
+            to_user: targetName,
+            message: message || undefined,
+            image_url: image_url || undefined,
+            status: "pending",
+          },
+          targetUser: targetUser ?? undefined,
         });
-
-        createdLogs.push(callLog);
-
-        if (targetUser) {
-          io.to(targetUser.socketId).emit("incomingCall", {
-            callId,
-            fromDept,
-            toDept: targetUser.department_name,
-            message,
-            image_url,
-          });
-        }
       }
     }
 
+    const createdLogs = await prisma.$transaction(async (tx) => {
+      const out: any[] = [];
+      for (const e of entries) {
+        const p = e.payload;
+        const created = await (tx as any).callLog.create({
+          data: {
+            callId: p.call_id,
+            fromUser: p.from_user,
+            toUser: p.to_user,
+            message: p.message,
+            imageUrl: p.image_url,
+            status: p.status || "pending",
+          },
+        });
+        out.push({
+          id: created.id,
+          call_id: created.callId,
+          from_user: created.fromUser,
+          to_user: created.toUser,
+          message: created.message ?? undefined,
+          image_url: created.imageUrl ?? undefined,
+          status: created.status,
+          created_at: created.createdAt,
+          accepted_at: created.acceptedAt ?? undefined,
+          rejected_at: created.rejectedAt ?? undefined,
+        });
+      }
+      return out;
+    });
+
+    createdLogs.forEach((callLog: any, i: number) => {
+      const targetUser = entries[i]?.targetUser;
+      if (targetUser) {
+        io.to(targetUser.socketId).emit("incomingCall", {
+          callId,
+          fromDept,
+          toDept: targetUser.department_name,
+          message,
+          image_url,
+        });
+      }
+    });
+
     const receiverNames = [...new Set(createdLogs.map((c: any) => c.to_user?.trim()).filter(Boolean))];
     const callLogIds = createdLogs.map((c: any) => c.id);
+    const reporterCount = new Set(createdLogs.map((c: any) => (c.from_user || "").trim()).filter(Boolean)).size;
     if (receiverNames.length > 0 && callLogIds.length > 0) {
-      await IncidentCaseModel.findOrCreateAndAttach(organizationId, receiverNames, callLogIds);
+      await IncidentCaseModel.findOrCreateAndAttach(organizationId, receiverNames, callLogIds, reporterCount, message || "");
     }
 
     createdLogs.forEach((callLog: any) => {

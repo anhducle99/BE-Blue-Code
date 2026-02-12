@@ -32,14 +32,16 @@ export const getIncidentCases = async (req: Request, res: Response) => {
     const startDate = req.query.startDate as string | undefined;
     const endDate = req.query.endDate as string | undefined;
     const list = await IncidentCaseModel.findByOrganization(organizationId, { startDate, endDate });
-    const withStatus = [];
-    for (const row of list) {
-      const handlers = [];
-      for (const key of row.handlerKeys) {
-        const status = await HandlerStateModel.getStatusForIncident(key, row.id);
-        handlers.push({ handlerKey: key, status });
-      }
-      withStatus.push({
+    const allHandlerKeys = list.flatMap((row) => row.handlerKeys);
+    const statusMap = await HandlerStateModel.getStatusMapForHandlers(allHandlerKeys);
+    const withStatus = list.map((row) => {
+      const handlers = row.handlerKeys.map((key) => {
+        const currentId = statusMap.get(key) ?? null;
+        const status =
+          currentId == null ? "available" : currentId === row.id ? "handling_this_incident" : "handling_other_incident";
+        return { handlerKey: key, status };
+      });
+      return {
         id: row.id,
         organizationId: row.organizationId,
         groupingKey: row.groupingKey,
@@ -49,8 +51,8 @@ export const getIncidentCases = async (req: Request, res: Response) => {
         reporters: row.reporters || [],
         calls: (row as any).calls || [],
         handlers,
-      });
-    }
+      };
+    });
     return res.json(withStatus);
   } catch (e: any) {
     return res.status(500).json({ success: false, message: e?.message || "Lỗi server" });
@@ -63,20 +65,22 @@ export const acceptIncident = async (req: Request, res: Response) => {
     if (!userId) {
       return res.status(401).json({ success: false, message: "Không tìm thấy thông tin người dùng" });
     }
+    const { UserModel } = await import("../models/User");
+    const dbUser = await UserModel.findById(userId);
+    if (!dbUser || !dbUser.name) {
+      return res.status(403).json({ success: false, message: "Không xác định được handler từ tài khoản đăng nhập" });
+    }
+    const handlerKey = String(dbUser.name).trim();
     const incidentCaseId = parseInt(req.params.id, 10);
     if (isNaN(incidentCaseId)) {
       return res.status(400).json({ success: false, message: "id không hợp lệ" });
-    }
-    const { handlerKey } = req.body;
-    if (!handlerKey || typeof handlerKey !== "string") {
-      return res.status(400).json({ success: false, message: "handlerKey là bắt buộc" });
     }
     const caseRow = await IncidentCaseModel.findById(incidentCaseId);
     if (!caseRow) {
       return res.status(404).json({ success: false, message: "Không tìm thấy sự cố" });
     }
     try {
-      await HandlerStateModel.accept(handlerKey.trim(), incidentCaseId);
+      await HandlerStateModel.accept(handlerKey, incidentCaseId);
     } catch (e: any) {
       if (e.message === "HANDLER_BUSY") {
         return res.status(409).json({
@@ -87,7 +91,7 @@ export const acceptIncident = async (req: Request, res: Response) => {
       throw e;
     }
     emitHandlerStatusChange(
-      { handlerKey: handlerKey.trim(), incidentCaseId, status: "handling_this_incident" },
+      { handlerKey, incidentCaseId, status: "handling_this_incident" },
       caseRow.organizationId
     );
     return res.json({ success: true, message: "Đã nhận xử lý sự cố" });
@@ -102,17 +106,19 @@ export const releaseIncident = async (req: Request, res: Response) => {
     if (!userId) {
       return res.status(401).json({ success: false, message: "Không tìm thấy thông tin người dùng" });
     }
-    const { handlerKey } = req.body;
-    if (!handlerKey || typeof handlerKey !== "string") {
-      return res.status(400).json({ success: false, message: "handlerKey là bắt buộc" });
+    const { UserModel } = await import("../models/User");
+    const dbUser = await UserModel.findById(userId);
+    if (!dbUser || !dbUser.name) {
+      return res.status(403).json({ success: false, message: "Không xác định được handler từ tài khoản đăng nhập" });
     }
-    const incidentCaseId = await HandlerStateModel.getCurrentIncidentCaseId(handlerKey.trim());
-    await HandlerStateModel.release(handlerKey.trim());
+    const handlerKey = String(dbUser.name).trim();
+    const incidentCaseId = await HandlerStateModel.getCurrentIncidentCaseId(handlerKey);
+    await HandlerStateModel.release(handlerKey);
     if (incidentCaseId != null) {
       const caseRow = await IncidentCaseModel.findById(incidentCaseId);
       if (caseRow) {
         emitHandlerStatusChange(
-          { handlerKey: handlerKey.trim(), incidentCaseId: null, status: "available" },
+          { handlerKey, incidentCaseId: null, status: "available" },
           caseRow.organizationId
         );
       }
