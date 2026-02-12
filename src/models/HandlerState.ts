@@ -26,19 +26,60 @@ export class HandlerStateModel {
     return "handling_other_incident";
   }
 
+  /** Batch: trả về map handlerKey -> currentIncidentCaseId (null nếu không có state). */
+  static async getStatusMapForHandlers(handlerKeys: string[]): Promise<Map<string, number | null>> {
+    const unique = Array.from(new Set(handlerKeys.map((k) => k.trim()).filter(Boolean)));
+    if (unique.length === 0) return new Map();
+    const rows = await (prisma as any).handlerState.findMany({
+      where: { handlerKey: { in: unique } },
+      select: { handlerKey: true, currentIncidentCaseId: true },
+    });
+    const map = new Map<string, number | null>();
+    unique.forEach((k) => map.set(k, null));
+    rows.forEach((r: any) => map.set(r.handlerKey, r.currentIncidentCaseId));
+    return map;
+  }
+
   static async accept(handlerKey: string, incidentCaseId: number): Promise<void> {
     const normalized = handlerKey.trim();
-    const existing = await (prisma as any).handlerState.findUnique({
+    const result = await (prisma as any).handlerState.updateMany({
+      where: {
+        handlerKey: normalized,
+        OR: [
+          { currentIncidentCaseId: null },
+          { currentIncidentCaseId: incidentCaseId },
+        ],
+      },
+      data: { currentIncidentCaseId: incidentCaseId },
+    });
+    if (result.count > 0) return;
+    const row = await (prisma as any).handlerState.findUnique({
       where: { handlerKey: normalized },
     });
-    if (existing && existing.currentIncidentCaseId != null && existing.currentIncidentCaseId !== incidentCaseId) {
-      throw new Error("HANDLER_BUSY");
+    if (row) {
+      if (row.currentIncidentCaseId != null && row.currentIncidentCaseId !== incidentCaseId) {
+        throw new Error("HANDLER_BUSY");
+      }
+      await (prisma as any).handlerState.update({
+        where: { handlerKey: normalized },
+        data: { currentIncidentCaseId: incidentCaseId },
+      });
+      return;
     }
-    await (prisma as any).handlerState.upsert({
-      where: { handlerKey: normalized },
-      create: { handlerKey: normalized, currentIncidentCaseId: incidentCaseId },
-      update: { currentIncidentCaseId: incidentCaseId },
-    });
+    try {
+      await (prisma as any).handlerState.create({
+        data: { handlerKey: normalized, currentIncidentCaseId: incidentCaseId },
+      });
+    } catch (e: any) {
+      if (e?.code === "P2002") {
+        const state = await this.get(handlerKey);
+        if (state?.currentIncidentCaseId != null && state.currentIncidentCaseId !== incidentCaseId) {
+          throw new Error("HANDLER_BUSY");
+        }
+        return;
+      }
+      throw e;
+    }
   }
 
   static async release(handlerKey: string): Promise<void> {

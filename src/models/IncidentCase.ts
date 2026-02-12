@@ -11,10 +11,22 @@ function normalizeName(name: string): string {
     .trim();
 }
 
-export function buildGroupingKey(organizationId: number, receiverNames: string[]): string {
+/**
+ * Tạo grouping key cho incident-case.
+ * hint (vd: message mô tả sự cố) giúp tách 2 sự cố khác nội dung
+ * trong cùng time bucket + cùng nhóm nhận.
+ * Nếu hint rỗng / không truyền => dùng "nohint" để giữ behavior cũ.
+ */
+export function buildGroupingKey(
+  organizationId: number,
+  receiverNames: string[],
+  hint?: string
+): string {
   const sorted = [...receiverNames].map(normalizeName).sort();
+  const raw = hint ? normalizeName(hint) : "";
+  const normalizedHint = raw ? raw.slice(0, 40) : "nohint";
   const timeBucket = Math.floor(Date.now() / INCIDENT_GROUP_WINDOW_MS);
-  return `${organizationId}_${sorted.join(",")}_${timeBucket}`;
+  return `${organizationId}_${sorted.join(",")}_${normalizedHint}_${timeBucket}`;
 }
 
 export interface IIncidentCase {
@@ -26,12 +38,18 @@ export interface IIncidentCase {
 }
 
 export class IncidentCaseModel {
+  /**
+   * @param reporterCount Số người báo (unique from_user) trong batch này, không phải số call log (người nhận).
+   */
   static async findOrCreateAndAttach(
     organizationId: number,
     receiverNames: string[],
-    callLogIds: number[]
+    callLogIds: number[],
+    reporterCount: number,
+    hint?: string
   ): Promise<IIncidentCase> {
-    const groupingKey = buildGroupingKey(organizationId, receiverNames);
+    const count = Math.max(1, reporterCount);
+    const groupingKey = buildGroupingKey(organizationId, receiverNames, hint);
     const since = new Date(Date.now() - INCIDENT_GROUP_WINDOW_MS);
 
     const existing = await (prisma as any).incidentCase.findFirst({
@@ -46,14 +64,18 @@ export class IncidentCaseModel {
     if (existing) {
       await (prisma as any).incidentCase.update({
         where: { id: existing.id },
-        data: { reportCount: { increment: callLogIds.length } },
+        data: { reportCount: { increment: count } },
       });
-      for (const callLogId of callLogIds) {
-        await (prisma as any).incidentCaseCallLog.upsert({
-          where: { callLogId },
-          create: { incidentCaseId: existing.id, callLogId },
-          update: {},
-        });
+      if (callLogIds.length > 0) {
+        await Promise.all(
+          callLogIds.map((callLogId) =>
+            (prisma as any).incidentCaseCallLog.upsert({
+              where: { callLogId },
+              create: { incidentCaseId: existing.id, callLogId },
+              update: {},
+            })
+          )
+        );
       }
       const updated = await (prisma as any).incidentCase.findUnique({
         where: { id: existing.id },
@@ -71,12 +93,16 @@ export class IncidentCaseModel {
       data: {
         organizationId,
         groupingKey,
-        reportCount: callLogIds.length,
+        reportCount: count,
       },
     });
-    for (const callLogId of callLogIds) {
-      await (prisma as any).incidentCaseCallLog.create({
-        data: { incidentCaseId: created.id, callLogId },
+    if (callLogIds.length > 0) {
+      await (prisma as any).incidentCaseCallLog.createMany({
+        data: callLogIds.map((callLogId) => ({
+          incidentCaseId: created.id,
+          callLogId,
+        })),
+        skipDuplicates: true,
       });
     }
     return {
@@ -121,6 +147,16 @@ export class IncidentCaseModel {
         callLogs: { select: { callLogId: true } },
       },
     });
+    const allCallLogIds = list.flatMap((row: any) => row.callLogs.map((c: any) => c.callLogId));
+    const logsById = new Map<number, { toUser: string | null; fromUser: string | null; createdAt: Date }>();
+    if (allCallLogIds.length > 0) {
+      const logs = await prisma.callLog.findMany({
+        where: { id: { in: allCallLogIds } },
+        select: { id: true, toUser: true, fromUser: true, createdAt: true },
+        orderBy: { createdAt: "asc" },
+      });
+      logs.forEach((l: any) => logsById.set(l.id, { toUser: l.toUser, fromUser: l.fromUser, createdAt: l.createdAt }));
+    }
     const result: Array<
       IIncidentCase & {
         callLogs: Array<{ callLogId: number }>;
@@ -131,11 +167,10 @@ export class IncidentCaseModel {
     > = [];
     for (const row of list) {
       const callLogIds = row.callLogs.map((c: any) => c.callLogId);
-      const logs = await prisma.callLog.findMany({
-        where: { id: { in: callLogIds } },
-        select: { toUser: true, fromUser: true, createdAt: true },
-        orderBy: { createdAt: "asc" },
-      });
+      const logs = callLogIds
+        .map((id: number) => logsById.get(id))
+        .filter(Boolean)
+        .sort((a: any, b: any) => a.createdAt.getTime() - b.createdAt.getTime());
       const handlerKeys = Array.from(
         new Set<string>(
           logs
