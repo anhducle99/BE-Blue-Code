@@ -312,21 +312,24 @@ io.on("connection", (socket) => {
           rejected_at: updatedLog.rejected_at,
         };
 
+        const payload = {
+          callId,
+          toDept: updatedLog.to_user,
+          toUser: updatedLog.to_user,
+          status: "rejected" as const,
+          fromUser: updatedLog.from_user,
+        };
+
+        const callerSocket = findSocketByDepartmentName(updatedLog.from_user);
+        if (callerSocket) {
+          callerSocket.emit("callStatusUpdate", payload);
+        }
+
         if (organizationId) {
           const roomName = `organization_${organizationId}`;
-          io.to(roomName).emit("callStatusUpdate", { 
-            callId, 
-            toDept: updatedLog.to_user,
-            toUser: updatedLog.to_user,
-            status: "rejected" 
-          });
+          io.to(roomName).emit("callStatusUpdate", payload);
         } else {
-          io.emit("callStatusUpdate", { 
-            callId, 
-            toDept: updatedLog.to_user,
-            toUser: updatedLog.to_user,
-            status: "rejected" 
-          });
+          io.emit("callStatusUpdate", payload);
         }
 
         emitCallLogUpdated(callLogData, organizationId ?? undefined);
