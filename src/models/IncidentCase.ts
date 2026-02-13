@@ -11,12 +11,7 @@ function normalizeName(name: string): string {
     .trim();
 }
 
-/**
- * Tạo grouping key cho incident-case.
- * hint (vd: message mô tả sự cố) giúp tách 2 sự cố khác nội dung
- * trong cùng time bucket + cùng nhóm nhận.
- * Nếu hint rỗng / không truyền => dùng "nohint" để giữ behavior cũ.
- */
+
 export function buildGroupingKey(
   organizationId: number,
   receiverNames: string[],

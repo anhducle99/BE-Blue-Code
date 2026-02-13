@@ -26,7 +26,6 @@ export class HandlerStateModel {
     return "handling_other_incident";
   }
 
-  /** Batch: trả về map handlerKey -> currentIncidentCaseId (null nếu không có state). */
   static async getStatusMapForHandlers(handlerKeys: string[]): Promise<Map<string, number | null>> {
     const unique = Array.from(new Set(handlerKeys.map((k) => k.trim()).filter(Boolean)));
     if (unique.length === 0) return new Map();

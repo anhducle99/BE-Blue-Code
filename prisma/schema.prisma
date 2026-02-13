@@ -8,21 +8,27 @@ datasource db {
 }
 
 model User {
-  id                  Int           @id @default(autoincrement())
+  id                  Int                 @id @default(autoincrement())
   name                String
-  email               String        @unique
+  email               String              @unique
   password            String?
   phone               String?
-  role                String        @default("User")
-  departmentId        Int?          @map("department_id")
-  organizationId      Int?          @map("organization_id")
-  isDepartmentAccount Boolean       @default(false) @map("is_department_account")
-  isAdminView         Boolean       @default(false) @map("is_admin_view")
-  isFloorAccount      Boolean       @default(false) @map("is_floor_account")
-  createdAt           DateTime      @default(now()) @map("created_at")
-  updatedAt           DateTime      @updatedAt @map("updated_at")
-  department          Department?   @relation(fields: [departmentId], references: [id])
-  organization        Organization? @relation(fields: [organizationId], references: [id])
+  role                String              @default("User")
+  departmentId        Int?                @map("department_id")
+  organizationId      Int?                @map("organization_id")
+  isDepartmentAccount Boolean             @default(false) @map("is_department_account")
+  isAdminView         Boolean             @default(false) @map("is_admin_view")
+  isFloorAccount      Boolean             @default(false) @map("is_floor_account")
+  
+  zaloUserId          String?             @unique @map("zalo_user_id")
+  zaloVerified        Boolean             @default(false) @map("zalo_verified")
+  zaloLinkedAt        DateTime?           @map("zalo_linked_at")
+  
+  createdAt           DateTime            @default(now()) @map("created_at")
+  updatedAt           DateTime            @updatedAt @map("updated_at")
+  department          Department?         @relation(fields: [departmentId], references: [id])
+  organization        Organization?       @relation(fields: [organizationId], references: [id])
+  zaloLinkCodes       ZaloLinkCode[]
 
   @@map("users")
 }
@@ -47,9 +53,14 @@ model Organization {
   id           Int          @id @default(autoincrement())
   name         String
   urlLogo      String?
+  
+  zaloOaId     String?      @map("zalo_oa_id")
+  zaloOaToken  String?      @map("zalo_oa_token")
+  
   createdAt    DateTime     @default(now()) @map("created_at")
   users        User[]
   departments  Department[]
+  zaloLinkCodes ZaloLinkCode[]
 
   @@map("organizations")
 }
@@ -118,7 +129,6 @@ model IncidentCaseCallLog {
   @@map("incident_case_call_logs")
 }
 
-
 model HandlerState {
   id                   Int       @id @default(autoincrement())
   handlerKey           String    @unique @map("handler_key")   
@@ -126,4 +136,37 @@ model HandlerState {
   updatedAt            DateTime  @updatedAt @map("updated_at")
 
   @@map("handler_states")
+}
+
+model ZaloLinkCode {
+  id              Int           @id @default(autoincrement())
+  code            String        @unique
+  userId          Int           @map("user_id")
+  organizationId  Int?          @map("organization_id")
+  expiredAt       DateTime      @map("expired_at")
+  usedAt          DateTime?     @map("used_at")
+  createdAt       DateTime      @default(now()) @map("created_at")
+  
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization    Organization? @relation(fields: [organizationId], references: [id])
+  
+  @@index([code])
+  @@index([userId])
+  @@index([expiredAt])
+  @@map("zalo_link_codes")
+}
+
+model ZaloEventLog {
+  id           Int      @id @default(autoincrement())
+  eventId      String   @unique @map("event_id")
+  eventName    String   @map("event_name")
+  zaloUserId   String?  @map("zalo_user_id")
+  payload      Json?
+  processedAt  DateTime @default(now()) @map("processed_at")
+  createdAt    DateTime @default(now()) @map("created_at")
+  
+  @@index([eventId])
+  @@index([zaloUserId])
+  @@index([createdAt])
+  @@map("zalo_event_logs")
 }

@@ -1,6 +1,8 @@
 import { Request, Response } from "express";
 import bcrypt from "bcrypt";
+import axios from "axios";
 import { UserModel } from "../models/User";
+import { prisma } from "../models/db";
 import { SignJWT } from "jose";
 
 export const register = async (req: Request, res: Response) => {
@@ -117,6 +119,143 @@ export const login = async (req: Request, res: Response) => {
       message: "Đăng nhập thành công",
     });
   } catch (err: any) {
+    return res.status(500).json({
+      success: false,
+      message: err.message || "Server error",
+    });
+  }
+};
+
+export const zaloLogin = async (req: Request, res: Response) => {
+  try {
+    const { accessToken, code, codeVerifier } = req.body;
+
+    if (!accessToken && !code) {
+      return res.status(400).json({
+        success: false,
+        message: "Thiếu accessToken hoặc code",
+      });
+    }
+
+    let zaloUserId: string;
+    let zaloUserInfo: any;
+
+    try {
+      let finalAccessToken = accessToken;
+
+      if (!finalAccessToken && code) {
+        const tokenRes = await axios.post(
+          "https://oauth.zaloapp.com/v4/access_token",
+          {
+            app_id: process.env.ZALO_APP_ID,
+            code,
+            grant_type: "authorization_code",
+            code_verifier: codeVerifier,
+          },
+          {
+            headers: {
+              "Content-Type": "application/x-www-form-urlencoded",
+              secret_key: process.env.ZALO_APP_SECRET,
+            },
+          }
+        );
+        finalAccessToken = tokenRes.data.access_token;
+      }
+
+      const profileRes = await axios.get(
+        "https://graph.zalo.me/v2.0/me?fields=id,name,picture",
+        {
+          headers: {
+            access_token: finalAccessToken,
+          },
+        }
+      );
+
+      if (profileRes.data.error) {
+        throw new Error(profileRes.data.error.message);
+      }
+
+      zaloUserId = profileRes.data.id;
+      zaloUserInfo = profileRes.data;
+    } catch (error: any) {
+      console.error("[ZaloLogin] Zalo API error:", error.response?.data || error.message);
+
+      if (process.env.NODE_ENV === "development" && req.body.mockMode) {
+        zaloUserId = req.body.mockZaloUserId || "mock_zalo_user_123";
+        zaloUserInfo = { id: zaloUserId, name: "Mock User" };
+        console.log("[ZaloLogin] Using mock mode with zaloUserId:", zaloUserId);
+      } else {
+        return res.status(401).json({
+          success: false,
+          message: "Invalid Zalo access token",
+          error: error.message,
+        });
+      }
+    }
+
+    const user = await prisma.user.findFirst({
+      where: {
+        zaloUserId: zaloUserId,
+        zaloVerified: true,
+      },
+      include: {
+        department: true,
+        organization: true,
+      },
+    });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message:
+          "Tài khoản chưa được liên kết với Zalo. Vui lòng liên kết trước trong ứng dụng web.",
+        code: "NOT_LINKED",
+        zaloUserId: zaloUserId,
+      });
+    }
+
+    if (!process.env.JWT_SECRET) {
+      throw new Error("JWT_SECRET is not defined");
+    }
+
+    const token = await new SignJWT({
+      id: user.id,
+      role: user.role,
+      zaloUserId: user.zaloUserId,
+      type: "zalo_mini_app",
+    })
+      .setProtectedHeader({ alg: "HS256" })
+      .setExpirationTime("7d")
+      .sign(new TextEncoder().encode(process.env.JWT_SECRET));
+
+    const userResponse = {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      phone: user.phone,
+      role: user.role,
+      department_id: user.departmentId,
+      department_name: user.department?.name,
+      organization_id: user.organizationId,
+      organization_name: user.organization?.name,
+      zaloUserId: user.zaloUserId,
+    };
+
+    return res.json({
+      success: true,
+      message: "Đăng nhập Zalo thành công",
+      data: {
+        token,
+        user: userResponse,
+        zaloUserInfo: {
+          id: zaloUserInfo.id,
+          name: zaloUserInfo.name,
+          picture: zaloUserInfo.picture,
+        },
+      },
+    });
+  } catch (err: any) {
+    console.error("[ZaloLogin] Error:", err);
     return res.status(500).json({
       success: false,
       message: err.message || "Server error",

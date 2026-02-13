@@ -6,6 +6,7 @@ import { getIO, onlineUsers, callTimers, normalizeName, emitCallLogCreated, emit
 import { randomUUID } from "crypto";
 import { authMiddleware } from "../middleware/authMiddleware";
 import { validateCallPermission } from "../middleware/validateCallPermission";
+import { sendZaloNotificationsForCall, setupCallTimeout } from "../services/zalo/callNotification";
 
 const router = Router();
 
@@ -195,6 +196,17 @@ router.post("/", authMiddleware, validateCallPermission, async (req, res) => {
       emitCallLogCreated(callLogData, organizationId);
     });
 
+    const targetNamesList = createdLogs.map((c: any) => c.to_user).filter(Boolean);
+    sendZaloNotificationsForCall(callId, targetNamesList, fromDept, message || "", organizationId)
+      .then(result => {
+        console.log(`[CallRoutes] Zalo notifications sent: ${result.sent}, failed: ${result.failed}`);
+      })
+      .catch(err => {
+        console.error('[CallRoutes] Zalo notification error:', err);
+      });
+
+    const timeoutTimer = setupCallTimeout(callId, targetNamesList, 17000, organizationId);
+    callTimers.set(callId, timeoutTimer);
 
     return res.json({ success: true, callId });
   } catch (err) {
