@@ -29,6 +29,7 @@ import historyRoutes from "./routes/historyRoutes";
 import userRoutes from "./routes/userRoutes";
 import statisticsRoutes from "./routes/statisticsRoutes";
 import incidentCaseRoutes from "./routes/incidentCaseRoutes";
+import miniAppRoutes from "./routes/miniAppRoutes";
 const app = express();
 
 app.use(express.json());
@@ -39,6 +40,8 @@ app.use(
       "http://192.165.15.251",
       "http://localhost:3000",
       "http://127.0.0.1:3000",
+      "http://localhost:3001",
+      "http://127.0.0.1:3001",
     ],
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
@@ -83,6 +86,7 @@ app.use("/api/users", userRoutes);
 app.use("/api/statistics", statisticsRoutes);
 app.use("/api/call", callRoutes);
 app.use("/api/incident-cases", incidentCaseRoutes);
+app.use("/api/mini", miniAppRoutes);
 
 app.use(
   (

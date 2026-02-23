@@ -195,6 +195,27 @@ router.post("/", authMiddleware, validateCallPermission, async (req, res) => {
       emitCallLogCreated(callLogData, organizationId);
     });
 
+    const timeoutTimer = setTimeout(async () => {
+      try {
+        const accepted = await prisma.callLog.findFirst({ where: { callId, status: "accepted" } });
+        if (accepted) return;
+        const pending = await prisma.callLog.findMany({ where: { callId, status: "pending" } });
+        for (const log of pending) {
+          await prisma.callLog.update({ where: { id: log.id }, data: { status: "timeout", rejectedAt: new Date() } });
+        }
+        const ioRef = getIO();
+        if (ioRef && organizationId) {
+          pending.forEach((log) => {
+            ioRef.to(`organization_${organizationId}`).emit("callStatusUpdate", {
+              callId, toDept: log.toUser, toUser: log.toUser, status: "timeout",
+            });
+          });
+        }
+      } catch (err) {
+        console.error("[CallTimeout] Error:", err);
+      }
+    }, 17000);
+    callTimers.set(callId, timeoutTimer);
 
     return res.json({ success: true, callId });
   } catch (err) {
