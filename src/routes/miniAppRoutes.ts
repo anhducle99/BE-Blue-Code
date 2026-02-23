@@ -2,14 +2,66 @@ import { Router } from "express";
 import { prisma } from "../models/db";
 import { CallLogModel } from "../models/CallLog";
 import { getIO, emitCallLogUpdated } from "../socketStore";
-import { zaloOAService } from "../services/zalo/zaloOAService";
 import jwt from "jsonwebtoken";
 import axios from "axios";
+import { authMiddleware } from "../middleware/authMiddleware";
 
 const router = Router();
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
-const ZALO_APP_ID = process.env.ZALO_APP_ID || "";
-const ZALO_APP_SECRET = process.env.ZALO_APP_SECRET || "";
+const MINI_APP_WEB_URL = process.env.MINI_APP_WEB_URL || "http://localhost:3001";
+const ZALO_MINI_APP_ID = process.env.ZALO_MINI_APP_ID || "";
+const MINI_APP_LAUNCH_MODE = (process.env.MINI_APP_LAUNCH_MODE || "auto").toLowerCase();
+
+type MiniJwtPayload = jwt.JwtPayload & {
+  userId?: number;
+  id?: number;
+  type?: string;
+  callId?: string;
+  zaloUserId?: string | null;
+};
+
+const MINI_TOKEN_TYPES = new Set(["mini_app", "mini_app_web", "zalo_mini_app"]);
+
+const miniUserSelect = {
+  id: true,
+  name: true,
+  email: true,
+  role: true,
+  organizationId: true,
+  departmentId: true,
+  zaloUserId: true,
+  zaloVerified: true,
+} as const;
+
+const buildMiniAppLaunchUrl = (
+  handoffToken: string,
+  callId?: string | null
+): { url: string; mode: "zalo" | "web" } => {
+  const safeBase = MINI_APP_WEB_URL.replace(/\/+$/, "");
+  const query = new URLSearchParams({ handoff: handoffToken });
+  const prefersZalo =
+    MINI_APP_LAUNCH_MODE === "zalo" ||
+    (MINI_APP_LAUNCH_MODE === "auto" && !!ZALO_MINI_APP_ID);
+
+  if (callId) {
+    query.set("callId", callId);
+  }
+
+  if (prefersZalo) {
+    if (!ZALO_MINI_APP_ID) {
+      throw new Error("ZALO_MINI_APP_ID is required when MINI_APP_LAUNCH_MODE=zalo");
+    }
+    return {
+      url: `https://zalo.me/s/${ZALO_MINI_APP_ID}/?${query.toString()}`,
+      mode: "zalo",
+    };
+  }
+
+  return {
+    url: `${safeBase}/login?${query.toString()}`,
+    mode: "web",
+  };
+};
 
 export const miniAppAuthMiddleware = async (req: any, res: any, next: any) => {
   try {
@@ -19,24 +71,30 @@ export const miniAppAuthMiddleware = async (req: any, res: any, next: any) => {
     }
 
     const token = authHeader.substring(7);
-    const decoded = jwt.verify(token, JWT_SECRET) as any;
+    const decoded = jwt.verify(token, JWT_SECRET) as MiniJwtPayload;
+    const tokenType = decoded.type;
+
+    if (!tokenType || !MINI_TOKEN_TYPES.has(tokenType)) {
+      return res.status(401).json({ error: "Invalid mini app token type" });
+    }
+
+    const userId = typeof decoded.userId === "number"
+      ? decoded.userId
+      : typeof decoded.id === "number"
+      ? decoded.id
+      : null;
+
+    if (!userId) {
+      return res.status(401).json({ error: "Invalid token payload" });
+    }
 
     const user = await prisma.user.findUnique({
-      where: { id: decoded.userId },
-      select: {
-        id: true,
-        name: true,
-        email: true,
-        role: true,
-        organizationId: true,
-        departmentId: true,
-        zaloUserId: true,
-        zaloVerified: true,
-      },
+      where: { id: userId },
+      select: miniUserSelect,
     });
 
-    if (!user || !user.zaloVerified) {
-      return res.status(401).json({ error: "User not found or Zalo not linked" });
+    if (!user) {
+      return res.status(401).json({ error: "User not found" });
     }
 
     req.miniUser = user;
@@ -46,9 +104,142 @@ export const miniAppAuthMiddleware = async (req: any, res: any, next: any) => {
   }
 };
 
+router.post("/auth/handoff-token", authMiddleware, async (req: any, res) => {
+  try {
+    const userId = req.user?.id;
+    const rawCallId = typeof req.body?.callId === "string" ? req.body.callId.trim() : "";
+    const callId = rawCallId || undefined;
+
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: "Missing user id",
+      });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: miniUserSelect,
+    });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    const handoffToken = jwt.sign(
+      {
+        userId: user.id,
+        type: "mini_handoff",
+        ...(callId ? { callId } : {}),
+      },
+      JWT_SECRET,
+      { expiresIn: "5m" }
+    );
+
+    const launch = buildMiniAppLaunchUrl(handoffToken, callId);
+
+    return res.json({
+      success: true,
+      message: "Handoff token created",
+      data: {
+        handoffToken,
+        expiresInSeconds: 300,
+        launchUrl: launch.url,
+        launchMode: launch.mode,
+      },
+    });
+  } catch (error: any) {
+    console.error("[MiniAppAuth] Create handoff token error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to create handoff token",
+      error: error.message,
+    });
+  }
+});
+
+router.post("/auth/handoff", async (req, res) => {
+  try {
+    const handoffToken = req.body?.handoffToken;
+
+    if (typeof handoffToken !== "string" || !handoffToken.trim()) {
+      return res.status(400).json({
+        success: false,
+        message: "Missing handoffToken",
+      });
+    }
+
+    const decoded = jwt.verify(handoffToken, JWT_SECRET) as MiniJwtPayload;
+
+    if (decoded.type !== "mini_handoff") {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid handoff token type",
+      });
+    }
+
+    const userId = typeof decoded.userId === "number" ? decoded.userId : null;
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid handoff payload",
+      });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: miniUserSelect,
+    });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    const token = jwt.sign(
+      {
+        userId: user.id,
+        type: "mini_app_web",
+      },
+      JWT_SECRET,
+      { expiresIn: "7d" }
+    );
+
+    return res.json({
+      success: true,
+      message: "Login thÃ nh cÃ´ng",
+      data: {
+        token,
+        user: {
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+          organizationId: user.organizationId,
+          departmentId: user.departmentId,
+        },
+        authMode: "web_handoff",
+        callId: decoded.callId || null,
+      },
+    });
+  } catch (error: any) {
+    console.error("[MiniAppAuth] Handoff login error:", error);
+    return res.status(401).json({
+      success: false,
+      message: "Invalid or expired handoff token",
+      error: error.message,
+    });
+  }
+});
+
 router.post("/auth/login", async (req, res) => {
   try {
-    const { accessToken, codeVerifier } = req.body;
+    const { accessToken } = req.body;
 
     if (!accessToken) {
       return res.status(400).json({
@@ -82,7 +273,6 @@ router.post("/auth/login", async (req, res) => {
       if (process.env.NODE_ENV === "development" && req.body.mockMode) {
         zaloUserId = req.body.mockZaloUserId || "mock_zalo_user_123";
         zaloUserInfo = { id: zaloUserId, name: "Mock User" };
-        console.log("[MiniAppAuth] Using mock mode with zaloUserId:", zaloUserId);
       } else {
         return res.status(401).json({
           success: false,
@@ -169,16 +359,30 @@ router.get("/my-calls", miniAppAuthMiddleware, async (req: any, res) => {
   try {
     const user = req.miniUser;
     const { status = "pending", limit = "10" } = req.query;
+    const parsedLimit = Number.parseInt(String(limit), 10);
+    const safeLimit = Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : 10;
 
     const calls = await prisma.callLog.findMany({
       where: {
         toUser: user.name,
         ...(status !== "all" ? { status: status as string } : {}),
       },
+      select: {
+        id: true,
+        callId: true,
+        fromUser: true,
+        toUser: true,
+        message: true,
+        imageUrl: true,
+        status: true,
+        createdAt: true,
+        acceptedAt: true,
+        rejectedAt: true,
+      },
       orderBy: {
         createdAt: "desc",
       },
-      take: parseInt(limit as string),
+      take: safeLimit,
     });
 
     const formattedCalls = calls.map((call: any) => ({
@@ -419,20 +623,21 @@ async function cancelOtherPendingCalls(
       },
     });
 
-    for (const log of pendingLogs) {
-      await CallLogModel.updateStatus(callId, log.toUser, "cancelled");
-
-      const otherUser = await prisma.user.findFirst({
-        where: { name: log.toUser, zaloVerified: true },
-      });
-
-      if (otherUser?.zaloUserId) {
-        await zaloOAService.sendTextMessage(
-          otherUser.zaloUserId,
-          `ℹ️ Cuộc gọi ${callId} đã được ${acceptedBy} nhận xử lý.`
-        );
-      }
+    if (pendingLogs.length === 0) {
+      return;
     }
+
+    await prisma.callLog.updateMany({
+      where: {
+        callId,
+        status: "pending",
+        toUser: { in: pendingLogs.map((log) => log.toUser) },
+      },
+      data: {
+        status: "cancelled",
+        rejectedAt: new Date(),
+      },
+    });
 
     const io = getIO();
     if (io && organizationId) {

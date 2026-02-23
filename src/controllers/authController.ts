@@ -183,7 +183,6 @@ export const zaloLogin = async (req: Request, res: Response) => {
       if (process.env.NODE_ENV === "development" && req.body.mockMode) {
         zaloUserId = req.body.mockZaloUserId || "mock_zalo_user_123";
         zaloUserInfo = { id: zaloUserId, name: "Mock User" };
-        console.log("[ZaloLogin] Using mock mode with zaloUserId:", zaloUserId);
       } else {
         return res.status(401).json({
           success: false,

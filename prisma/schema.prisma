@@ -98,6 +98,8 @@ model CallLog {
   @@index([callId])
   @@index([fromUser])
   @@index([toUser])
+  @@index([toUser, createdAt])
+  @@index([toUser, status, createdAt])
   @@index([createdAt])
   @@map("call_logs")
 }
