@@ -8,16 +8,20 @@ const PORT = process.env.PORT || 5000;
 
 const getNetworkIP = () => {
   const interfaces = networkInterfaces();
+  let fallbackIPv4 = "";
+
   for (const name of Object.keys(interfaces)) {
     for (const iface of interfaces[name] || []) {
       if (iface.family === "IPv4" && !iface.internal) {
-        if (iface.address.startsWith("192.165.15.")) {
+        if (iface.address.startsWith("192.165.")) {
           return iface.address;
         }
+        if (!fallbackIPv4) fallbackIPv4 = iface.address;
       }
     }
   }
-  return "192.165.15.28";
+
+  return fallbackIPv4 || "127.0.0.1";
 };
 
 const networkIP = getNetworkIP();
