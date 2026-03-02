@@ -39,7 +39,6 @@
     "prisma:deploy": "prisma migrate deploy",
     "prisma:status": "prisma migrate status",
     "prisma:reset": "prisma migrate reset",
-    "test:mini-link": "vitest run src/tests/miniAppLinkToken.test.ts",
     "db:backup": "echo 'Run: pg_dump -U postgres -d bluecode > backup_$(date +%Y%m%d_%H%M%S).sql'",
     "db:restore": "echo 'Run: psql -U postgres -d bluecode < backup_file.sql'"
   },
@@ -52,16 +51,12 @@
     "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^20.19.14",
     "@types/pg": "^8.15.5",
-    "@types/qrcode": "^1.5.6",
     "@types/socket.io-client": "^1.4.36",
-    "@types/supertest": "^6.0.3",
     "concurrently": "^9.2.1",
     "nodemon": "^3.1.10",
     "prisma": "^6.15.0",
-    "supertest": "^7.2.2",
     "ts-node": "^10.9.2",
-    "typescript": "^5.9.2",
-    "vitest": "^4.0.18"
+    "typescript": "^5.9.2"
   },
   "dependencies": {
     "@prisma/client": "6.15.0",
@@ -74,7 +69,6 @@
     "jose": "^6.1.3",
     "jsonwebtoken": "^9.0.2",
     "pg": "^8.16.3",
-    "qrcode": "^1.5.4",
     "socket.io": "^4.8.1",
     "socket.io-client": "^4.8.1"
   }

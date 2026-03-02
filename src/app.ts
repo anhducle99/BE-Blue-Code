@@ -34,76 +34,22 @@ const app = express();
 
 app.use(express.json());
 
-const STATIC_ALLOWED_ORIGINS = [
-  "http://192.165.15.251",
-  "http://192.165.15.251:5000",
-  "http://192.165.70.251",
-  "http://192.165.70.251:5000",
-  "http://localhost:3000",
-  "http://127.0.0.1:3000",
-  "http://localhost:3001",
-  "http://127.0.0.1:3001",
-  "https://zalo.me",
-  "https://mini.zalo.me",
-  "https://id.zalo.me",
-  "http://theanhne.one",
-  "https://theanhne.one",
-  "http://www.theanhne.one",
-  "https://www.theanhne.one",
-];
+app.use(
+  cors({
+    origin: [
+      "http://192.165.15.251",
+      "http://localhost:3000",
+      "http://127.0.0.1:3000",
+      "http://localhost:3001",
+      "http://127.0.0.1:3001",
+    ],
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+  })
+);
 
-const isAllowedOrigin = (origin?: string | null) => {
-  if (!origin) return true;
-  if (STATIC_ALLOWED_ORIGINS.includes(origin)) return true;
-  if (/^https?:\/\/192\.165\.\d+\.\d+(:\d+)?$/.test(origin)) return true;
-  if (/^wss?:\/\/192\.165\.\d+\.\d+(:\d+)?$/.test(origin)) return true;
-
-  let hostname = "";
-  try {
-    hostname = new URL(origin).hostname.toLowerCase();
-  } catch {
-    hostname = String(origin).toLowerCase();
-  }
-
-  const hasAllowedSuffix =
-    hostname.endsWith(".zalo.me") ||
-    hostname.endsWith(".zalo.vn") ||
-    hostname.endsWith(".zdn.vn") ||
-    hostname.endsWith(".trycloudflare.com");
-
-  if (
-    hostname === "zalo.me" ||
-    hostname === "zalo.vn" ||
-    hostname === "zdn.vn" ||
-    hostname === "trycloudflare.com" ||
-    hasAllowedSuffix
-  ) {
-    return true;
-  }
-
-  return false;
-};
-
-const corsOptions: cors.CorsOptions = {
-  origin: (origin, callback) => {
-    if (isAllowedOrigin(origin)) {
-      return callback(null, true);
-    }
-
-    console.warn("[CORS] Blocked origin:", origin);
-    callback(new Error("Not allowed by CORS"));
-  },
-  credentials: true,
-  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"],
-};
-app.use(cors(corsOptions));
-
-app.options("*", cors(corsOptions));
-
-app.get("/api/health", cors({ origin: true }), (_req, res) => {
-  res.status(200).json({ ok: true, service: "bluecode-api" });
-});
+app.options("*", cors());
 
 app.options("/api/info", cors());
 app.get("/api/info", cors({ origin: true }), (req, res) => {
@@ -112,7 +58,7 @@ app.get("/api/info", cors({ origin: true }), (req, res) => {
 
   let apiUrl = `http://localhost:${PORT}`;
 
-  if (origin.includes("192.165.")) {
+  if (origin.includes("192.165.15.")) {
     const match = origin.match(/http:\/\/(\d+\.\d+\.\d+\.\d+):/);
     if (match) {
       apiUrl = `http://${match[1]}:${PORT}`;
@@ -157,20 +103,16 @@ const PORT = process.env.PORT || 5000;
 
 const getNetworkIP = () => {
   const interfaces = networkInterfaces();
-  let fallbackIPv4 = "";
-
   for (const name of Object.keys(interfaces)) {
     for (const iface of interfaces[name] || []) {
       if (iface.family === "IPv4" && !iface.internal) {
-        if (iface.address.startsWith("192.165.")) {
+        if (iface.address.startsWith("192.165.15.")) {
           return iface.address;
         }
-        if (!fallbackIPv4) fallbackIPv4 = iface.address;
       }
     }
   }
-
-  return fallbackIPv4 || "127.0.0.1";
+  return "192.165.15.28";
 };
 
 const networkIP = getNetworkIP();
@@ -179,7 +121,19 @@ const server = http.createServer(app);
 const io = new SocketServer(server, {
   cors: {
     origin: (origin, callback) => {
-      if (isAllowedOrigin(origin)) {
+      if (!origin) {
+        return callback(null, true);
+      }
+
+      if (origin.includes("localhost") || origin.includes("127.0.0.1")) {
+        return callback(null, true);
+      }
+
+      if (/^http:\/\/192\.165\.15\.\d+(:\d+)?$/.test(origin)) {
+        return callback(null, true);
+      }
+
+      if (/^ws:\/\/192\.165\.15\.\d+(:\d+)?$/.test(origin)) {
         return callback(null, true);
       }
 
