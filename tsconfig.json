@@ -22,5 +22,5 @@
     "types": ["node", "express"]
   },
   "include": ["src/**/*", "src/@types/**/*"],
-  "exclude": ["dist", "node_modules"]
+  "exclude": ["dist", "node_modules", "src/tests/**/*"]
 }
