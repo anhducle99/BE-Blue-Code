@@ -4,6 +4,79 @@ import axios from "axios";
 import { UserModel } from "../models/User";
 import { prisma } from "../models/db";
 import { SignJWT } from "jose";
+import {
+  consumeQrLoginSessionApproval,
+  createQrLoginSession,
+  getQrLoginSessionForPoll,
+} from "../services/qrLoginSessionStore";
+
+type QrCodeLike = {
+  toDataURL: (
+    text: string,
+    options?: { width?: number; margin?: number; errorCorrectionLevel?: "L" | "M" | "Q" | "H" }
+  ) => Promise<string>;
+};
+
+let qrCodeLib: QrCodeLike | null = null;
+try {
+  qrCodeLib = require("qrcode");
+} catch {
+  qrCodeLib = null;
+}
+
+const ZALO_MINI_APP_ID = process.env.ZALO_MINI_APP_ID || "";
+const MINI_APP_WEB_URL = process.env.MINI_APP_WEB_URL || "http://localhost:3001";
+const MINI_APP_LAUNCH_MODE = (process.env.MINI_APP_LAUNCH_MODE || "web").toLowerCase();
+const MINI_APP_TESTING_VERSION = process.env.MINI_APP_TESTING_VERSION || "";
+const IS_PRODUCTION = process.env.NODE_ENV === "production";
+
+const assertMiniAppLaunchConfig = () => {
+  if (!IS_PRODUCTION) return;
+  if (!process.env.MINI_APP_WEB_URL || process.env.MINI_APP_WEB_URL.includes("localhost")) {
+    throw new Error("MINI_APP_WEB_URL is required in production and must not use localhost");
+  }
+  if (!process.env.MINI_APP_LAUNCH_MODE) {
+    throw new Error("MINI_APP_LAUNCH_MODE is required in production");
+  }
+  if (MINI_APP_LAUNCH_MODE === "zalo" && !process.env.ZALO_MINI_APP_ID) {
+    throw new Error("ZALO_MINI_APP_ID is required in production when MINI_APP_LAUNCH_MODE=zalo");
+  }
+};
+
+const buildQrLoginLaunchUrl = (
+  sessionId: string
+): { launchUrl: string; mode: "zalo" | "web" } => {
+  const query = new URLSearchParams({
+    qrSession: sessionId,
+    intent: "qr_login",
+  });
+  const prefersZalo =
+    MINI_APP_LAUNCH_MODE === "zalo" ||
+    (MINI_APP_LAUNCH_MODE === "auto" && !!ZALO_MINI_APP_ID);
+
+  if (prefersZalo) {
+    if (!ZALO_MINI_APP_ID) {
+      throw new Error("ZALO_MINI_APP_ID is required when MINI_APP_LAUNCH_MODE=zalo");
+    }
+    const zaloParams = new URLSearchParams();
+    zaloParams.set("env", "TESTING");
+    if (MINI_APP_TESTING_VERSION.trim()) {
+      zaloParams.set("version", MINI_APP_TESTING_VERSION.trim());
+    }
+    query.forEach((value, key) => zaloParams.set(key, value));
+
+    return {
+      launchUrl: `https://zalo.me/s/${ZALO_MINI_APP_ID}/?${zaloParams.toString()}`,
+      mode: "zalo",
+    };
+  }
+
+  const safeBase = MINI_APP_WEB_URL.replace(/\/+$/, "");
+  return {
+    launchUrl: `${safeBase}/?${query.toString()}#/login`,
+    mode: "web",
+  };
+};
 
 export const register = async (req: Request, res: Response) => {
   try {
@@ -122,6 +195,108 @@ export const login = async (req: Request, res: Response) => {
     return res.status(500).json({
       success: false,
       message: err.message || "Server error",
+    });
+  }
+};
+
+export const createQrLoginSessionController = async (_req: Request, res: Response) => {
+  try {
+    assertMiniAppLaunchConfig();
+    const ttlSeconds = 180;
+    const { session, pollToken } = await createQrLoginSession(ttlSeconds * 1000);
+    const launch = buildQrLoginLaunchUrl(session.sessionId);
+    const qrUrl = qrCodeLib
+      ? await qrCodeLib.toDataURL(launch.launchUrl, {
+          width: 280,
+          margin: 1,
+          errorCorrectionLevel: "M",
+        })
+      : `https://api.qrserver.com/v1/create-qr-code/?size=280x280&data=${encodeURIComponent(launch.launchUrl)}`;
+
+    return res.json({
+      success: true,
+      message: "QR login session created",
+      data: {
+        sessionId: session.sessionId,
+        pollToken,
+        expiresInSeconds: ttlSeconds,
+        expiresAt: new Date(session.expiresAt).toISOString(),
+        launchUrl: launch.launchUrl,
+        launchMode: launch.mode,
+        qrUrl,
+        pollIntervalMs: 2000,
+      },
+    });
+  } catch (err: any) {
+    return res.status(500).json({
+      success: false,
+      message: err.message || "Failed to create QR login session",
+    });
+  }
+};
+
+export const getQrLoginSessionStatusController = async (req: Request, res: Response) => {
+  try {
+    const sessionId = String(req.params.sessionId || "").trim();
+    const pollToken = String(req.query.pollToken || "").trim();
+    if (!sessionId) {
+      return res.status(400).json({
+        success: false,
+        message: "Missing sessionId",
+      });
+    }
+    if (!pollToken) {
+      return res.status(400).json({
+        success: false,
+        message: "Missing pollToken",
+      });
+    }
+
+    const approved = await consumeQrLoginSessionApproval(sessionId, pollToken);
+    if (approved?.user) {
+      if (!process.env.JWT_SECRET) {
+        throw new Error("JWT_SECRET is not defined");
+      }
+      const token = await new SignJWT({
+        id: approved.user.id,
+        role: approved.user.role,
+      })
+        .setProtectedHeader({ alg: "HS256" })
+        .setExpirationTime(process.env.JWT_EXPIRES_IN || "1h")
+        .sign(new TextEncoder().encode(process.env.JWT_SECRET));
+
+      return res.json({
+        success: true,
+        data: {
+          status: "approved",
+          token,
+          user: approved.user,
+          approvedAt: approved.approvedAt ? new Date(approved.approvedAt).toISOString() : null,
+          expiresAt: new Date(approved.expiresAt).toISOString(),
+        },
+      });
+    }
+
+    const session = await getQrLoginSessionForPoll(sessionId, pollToken);
+    if (!session) {
+      return res.status(404).json({
+        success: false,
+        message: "Session not found or expired",
+        data: { status: "expired" },
+      });
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        status: "pending",
+        expiresAt: new Date(session.expiresAt).toISOString(),
+      },
+    });
+  } catch (err: any) {
+    return res.status(500).json({
+      success: false,
+      message: err.message || "Failed to fetch QR login status",
     });
   }
 };
