@@ -17,6 +17,10 @@ export interface IUser {
   is_department_account?: boolean;
   is_admin_view?: boolean;
   is_floor_account?: boolean;
+  zalo_user_id?: string | null;
+  zalo_display_name?: string | null;
+  zalo_verified?: boolean;
+  zalo_linked_at?: Date | null;
   created_at?: Date;
   updated_at?: Date;
 }
@@ -35,6 +39,10 @@ function sanitizeUser(user: any, includePassword: boolean = false): IUser {
     is_department_account: user.isDepartmentAccount ?? false,
     is_admin_view: user.isAdminView ?? false,
     is_floor_account: user.isFloorAccount ?? false,
+    zalo_user_id: user.zaloUserId ?? null,
+    zalo_display_name: user.zaloDisplayName ?? null,
+    zalo_verified: user.zaloVerified ?? false,
+    zalo_linked_at: user.zaloLinkedAt ?? null,
     created_at: user.createdAt,
     updated_at: user.updatedAt,
   };
@@ -60,7 +68,7 @@ export class UserModel {
         department: { select: { name: true } },
         organization: { select: { name: true } },
       },
-      orderBy: { id: "asc" },
+      orderBy: { id: "desc" },
     });
 
     return users.map((u: any) => sanitizeUser(u, false));

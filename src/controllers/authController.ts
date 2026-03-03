@@ -388,6 +388,17 @@ export const zaloLogin = async (req: Request, res: Response) => {
       });
     }
 
+    const profileDisplayName =
+      typeof zaloUserInfo?.name === "string" ? zaloUserInfo.name.trim() : "";
+    const finalDisplayName = profileDisplayName || user.zaloDisplayName || null;
+    if (finalDisplayName && finalDisplayName !== user.zaloDisplayName) {
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { zaloDisplayName: finalDisplayName },
+      });
+      user.zaloDisplayName = finalDisplayName;
+    }
+
     if (!process.env.JWT_SECRET) {
       throw new Error("JWT_SECRET is not defined");
     }
@@ -413,6 +424,7 @@ export const zaloLogin = async (req: Request, res: Response) => {
       organization_id: user.organizationId,
       organization_name: user.organization?.name,
       zaloUserId: user.zaloUserId,
+      zaloDisplayName: user.zaloDisplayName,
     };
 
     return res.json({

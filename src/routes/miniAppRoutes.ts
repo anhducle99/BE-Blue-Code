@@ -14,6 +14,9 @@ const ZALO_MINI_APP_ID = process.env.ZALO_MINI_APP_ID || "";
 const MINI_APP_LAUNCH_MODE = (process.env.MINI_APP_LAUNCH_MODE || "web").toLowerCase();
 const IS_PRODUCTION = process.env.NODE_ENV === "production";
 const MINI_APP_TESTING_VERSION = process.env.MINI_APP_TESTING_VERSION || "";
+const CALL_PENDING_TIMEOUT_MS = Number(process.env.CALL_PENDING_TIMEOUT_MS || "17000");
+const MINI_PENDING_GRACE_MS = Number(process.env.MINI_PENDING_GRACE_MS || "3000");
+const MINI_PENDING_MAX_AGE_MS = Math.max(5000, CALL_PENDING_TIMEOUT_MS + MINI_PENDING_GRACE_MS);
 
 type MiniJwtPayload = jwt.JwtPayload & {
   userId?: number;
@@ -34,8 +37,62 @@ const miniUserSelect = {
   isDepartmentAccount: true,
   isFloorAccount: true,
   zaloUserId: true,
+  zaloDisplayName: true,
   zaloVerified: true,
 } as const;
+
+const normalizeIdentityName = (value?: string | null) =>
+  (value || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, "")
+    .trim();
+
+const collectMiniCallTargets = (userName?: string | null, departmentName?: string | null): string[] => {
+  const rawTargets = [userName, departmentName]
+    .map((v) => (typeof v === "string" ? v.trim() : ""))
+    .filter((v) => !!v);
+
+  const normalizedTargets = rawTargets.map((v) => normalizeIdentityName(v)).filter((v) => !!v);
+  return Array.from(new Set([...rawTargets, ...normalizedTargets]));
+};
+
+const buildToUserWhere = (targets: string[]) =>
+  targets
+    .filter((v) => !!v)
+    .map((target) => ({
+      toUser: {
+        equals: target,
+        mode: "insensitive" as const,
+      },
+    }));
+
+const getPendingFreshAfter = () => new Date(Date.now() - MINI_PENDING_MAX_AGE_MS);
+
+const expireStalePendingMiniCalls = async (callTargets: string[]) => {
+  const toUserWhere = buildToUserWhere(callTargets);
+  if (toUserWhere.length === 0) return 0;
+
+  const staleWhere = {
+    status: "pending" as const,
+    OR: toUserWhere,
+    createdAt: { lt: getPendingFreshAfter() },
+  };
+
+  const staleCount = await prisma.callLog.count({ where: staleWhere });
+  if (staleCount === 0) return 0;
+
+  const result = await prisma.callLog.updateMany({
+    where: staleWhere,
+    data: {
+      status: "timeout",
+      rejectedAt: new Date(),
+    },
+  });
+
+  return result.count;
+};
 
 const assertMiniAppLaunchConfig = () => {
   if (!IS_PRODUCTION) return;
@@ -147,7 +204,20 @@ export const miniAppAuthMiddleware = async (req: any, res: any, next: any) => {
       return res.status(401).json({ error: "User not found" });
     }
 
-    req.miniUser = user;
+    let departmentName: string | null = null;
+    if (user.departmentId) {
+      const department = await prisma.department.findUnique({
+        where: { id: user.departmentId },
+        select: { name: true },
+      });
+      departmentName = department?.name || null;
+    }
+
+    req.miniUser = {
+      ...user,
+      departmentName: departmentName || undefined,
+    };
+    req.miniCallTargets = collectMiniCallTargets(user.name, departmentName);
     next();
   } catch (error) {
     return res.status(401).json({ error: "Invalid token" });
@@ -316,6 +386,8 @@ router.post("/auth/link", async (req, res) => {
             isDepartmentAccount: user.isDepartmentAccount,
             isFloorAccount: user.isFloorAccount,
             zaloUserId: user.zaloUserId,
+            zaloDisplayName:
+              user.zaloDisplayName || zaloUserName || clientProvidedName || null,
             zaloVerified: user.zaloVerified,
           },
           zaloUser: {
@@ -345,6 +417,7 @@ router.post("/auth/link", async (req, res) => {
       where: { id: user.id },
       data: {
         zaloUserId,
+        zaloDisplayName: zaloUserName || clientProvidedName || null,
         zaloVerified: true,
         zaloLinkedAt: new Date(),
       },
@@ -358,6 +431,7 @@ router.post("/auth/link", async (req, res) => {
         isDepartmentAccount: true,
         isFloorAccount: true,
         zaloUserId: true,
+        zaloDisplayName: true,
         zaloVerified: true,
         zaloLinkedAt: true,
       },
@@ -573,6 +647,7 @@ router.post("/auth/login", async (req, res) => {
         organizationId: true,
         departmentId: true,
         zaloUserId: true,
+        zaloDisplayName: true,
       },
     });
 
@@ -583,6 +658,17 @@ router.post("/auth/login", async (req, res) => {
         code: "NOT_LINKED",
         zaloUserId: zaloUserId,
       });
+    }
+
+    const profileDisplayName =
+      typeof zaloUserInfo?.name === "string" ? zaloUserInfo.name.trim() : "";
+    const finalDisplayName = profileDisplayName || user.zaloDisplayName || null;
+    if (finalDisplayName && finalDisplayName !== user.zaloDisplayName) {
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { zaloDisplayName: finalDisplayName },
+      });
+      user.zaloDisplayName = finalDisplayName;
     }
 
     const token = jwt.sign(
@@ -607,6 +693,7 @@ router.post("/auth/login", async (req, res) => {
           role: user.role,
           organizationId: user.organizationId,
           departmentId: user.departmentId,
+          zaloDisplayName: user.zaloDisplayName,
         },
         zaloUserInfo: {
           id: zaloUserInfo.id,
@@ -636,14 +723,26 @@ router.post("/auth/verify", miniAppAuthMiddleware, async (req: any, res) => {
 router.get("/my-calls", miniAppAuthMiddleware, async (req: any, res) => {
   try {
     const user = req.miniUser;
-    const { status = "pending", limit = "10" } = req.query;
+    const { status = "pending", limit = "50" } = req.query;
+    const callTargets = Array.isArray(req.miniCallTargets) ? req.miniCallTargets : collectMiniCallTargets(user?.name);
     const parsedLimit = Number.parseInt(String(limit), 10);
-    const safeLimit = Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : 10;
+    const safeLimit = Number.isFinite(parsedLimit) && parsedLimit > 0 ? Math.min(parsedLimit, 200) : 50;
+    const shouldExpirePending = status === "pending" || status === "all";
+
+    if (shouldExpirePending) {
+      await expireStalePendingMiniCalls(callTargets);
+    }
+
+    const pendingFilter =
+      status === "pending"
+        ? { createdAt: { gte: getPendingFreshAfter() } }
+        : {};
 
     const calls = await prisma.callLog.findMany({
       where: {
-        toUser: user.name,
+        OR: buildToUserWhere(callTargets),
         ...(status !== "all" ? { status: status as string } : {}),
+        ...pendingFilter,
       },
       select: {
         id: true,
@@ -695,11 +794,12 @@ router.get("/calls/:callId", miniAppAuthMiddleware, async (req: any, res) => {
   try {
     const user = req.miniUser;
     const { callId } = req.params;
+    const callTargets = Array.isArray(req.miniCallTargets) ? req.miniCallTargets : collectMiniCallTargets(user?.name);
 
     const call = await prisma.callLog.findFirst({
       where: {
         callId,
-        toUser: user.name,
+        OR: buildToUserWhere(callTargets),
       },
     });
 
@@ -739,12 +839,16 @@ router.post("/calls/:callId/accept", miniAppAuthMiddleware, async (req: any, res
   try {
     const user = req.miniUser;
     const { callId } = req.params;
+    const callTargets = Array.isArray(req.miniCallTargets) ? req.miniCallTargets : collectMiniCallTargets(user?.name);
+
+    await expireStalePendingMiniCalls(callTargets);
 
     const callLog = await prisma.callLog.findFirst({
       where: {
         callId,
-        toUser: user.name,
+        OR: buildToUserWhere(callTargets),
         status: "pending",
+        createdAt: { gte: getPendingFreshAfter() },
       },
     });
 
@@ -755,7 +859,7 @@ router.post("/calls/:callId/accept", miniAppAuthMiddleware, async (req: any, res
       });
     }
 
-    const updated = await CallLogModel.updateStatus(callId, user.name, "accepted");
+    const updated = await CallLogModel.updateStatus(callId, callLog.toUser, "accepted");
 
     if (!updated) {
       return res.status(400).json({
@@ -768,8 +872,8 @@ router.post("/calls/:callId/accept", miniAppAuthMiddleware, async (req: any, res
     if (io && user.organizationId) {
       io.to(`organization_${user.organizationId}`).emit("callStatusUpdate", {
         callId,
-        toDept: user.name,
-        toUser: user.name,
+        toDept: callLog.toUser,
+        toUser: callLog.toUser,
         status: "accepted",
       });
 
@@ -790,7 +894,7 @@ router.post("/calls/:callId/accept", miniAppAuthMiddleware, async (req: any, res
       );
     }
 
-    await cancelOtherPendingCalls(callId, user.name, user.organizationId);
+    await cancelOtherPendingCalls(callId, callLog.toUser, user.organizationId);
 
     res.json({
       success: true,
@@ -816,12 +920,16 @@ router.post("/calls/:callId/reject", miniAppAuthMiddleware, async (req: any, res
   try {
     const user = req.miniUser;
     const { callId } = req.params;
+    const callTargets = Array.isArray(req.miniCallTargets) ? req.miniCallTargets : collectMiniCallTargets(user?.name);
+
+    await expireStalePendingMiniCalls(callTargets);
 
     const callLog = await prisma.callLog.findFirst({
       where: {
         callId,
-        toUser: user.name,
+        OR: buildToUserWhere(callTargets),
         status: "pending",
+        createdAt: { gte: getPendingFreshAfter() },
       },
     });
 
@@ -832,7 +940,7 @@ router.post("/calls/:callId/reject", miniAppAuthMiddleware, async (req: any, res
       });
     }
 
-    const updated = await CallLogModel.updateStatus(callId, user.name, "rejected");
+    const updated = await CallLogModel.updateStatus(callId, callLog.toUser, "rejected");
 
     if (!updated) {
       return res.status(400).json({
@@ -845,8 +953,8 @@ router.post("/calls/:callId/reject", miniAppAuthMiddleware, async (req: any, res
     if (io && user.organizationId) {
       io.to(`organization_${user.organizationId}`).emit("callStatusUpdate", {
         callId,
-        toDept: user.name,
-        toUser: user.name,
+        toDept: callLog.toUser,
+        toUser: callLog.toUser,
         status: "rejected",
       });
 
