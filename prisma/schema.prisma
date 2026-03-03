@@ -21,6 +21,7 @@ model User {
   isFloorAccount      Boolean             @default(false) @map("is_floor_account")
   
   zaloUserId          String?             @unique @map("zalo_user_id")
+  zaloDisplayName     String?             @map("zalo_display_name")
   zaloVerified        Boolean             @default(false) @map("zalo_verified")
   zaloLinkedAt        DateTime?           @map("zalo_linked_at")
   

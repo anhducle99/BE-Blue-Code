@@ -164,6 +164,7 @@ router.post("/", authMiddleware, validateCallPermission, async (req, res) => {
         io.to(targetUser.socketId).emit("incomingCall", {
           callId,
           fromDept,
+          toUser: targetUser.name,
           toDept: targetUser.department_name,
           message,
           image_url,

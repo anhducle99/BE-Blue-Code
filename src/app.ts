@@ -203,15 +203,36 @@ setIO(io);
 
 io.on("connection", (socket) => {
   socket.on("register", async (data) => {
-    const { name, department_id, department_name } = data;
-    const key = `${name}_${department_name || name}`;
     const { UserModel } = await import("./models/User");
+    const payloadId = Number(data?.id);
+    const payloadName = String(data?.name || "").trim();
+    const payloadEmail = String(data?.email || "").trim();
 
-    let user = await UserModel.findByEmail(name);
-    if (!user) {
-      const allUsers = await UserModel.findAll();
-      user = allUsers.find(u => u.name === name || u.email === name) || null;
+    let user = Number.isInteger(payloadId) && payloadId > 0
+      ? await UserModel.findById(payloadId)
+      : null;
+
+    if (!user && payloadEmail) {
+      user = await UserModel.findByEmail(payloadEmail);
     }
+
+    if (!user && payloadName) {
+      const allUsers = await UserModel.findAll();
+      const normalizedPayloadName = normalizeName(payloadName);
+      user =
+        allUsers.find(
+          (u) =>
+            normalizeName(String(u.name || "")) === normalizedPayloadName ||
+            normalizeName(String(u.email || "")) === normalizedPayloadName
+        ) || null;
+    }
+
+    const safeName = (user?.name || data?.name || "").toString().trim();
+    const safeDeptName = (user?.department_name || data?.department_name || safeName).toString().trim();
+    const safeDeptId = String(user?.department_id ?? data?.department_id ?? "");
+
+    if (!safeName) return;
+    const key = `${safeName}_${safeDeptName || safeName}`;
 
     if (user && user.role === "SuperAdmin") {
       const { prisma } = await import("./models/db");
@@ -224,9 +245,9 @@ io.on("connection", (socket) => {
 
     onlineUsers.set(key, {
       socketId: socket.id,
-      name: data.name,
-      department_id: data.department_id,
-      department_name: data.department_name,
+      name: safeName,
+      department_id: safeDeptId,
+      department_name: safeDeptName,
     });
   });
 
