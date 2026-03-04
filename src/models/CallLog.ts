@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { prisma } from "./db";
 
 export interface ICallLog {
@@ -87,126 +88,102 @@ export class CallLogModel {
       receiver?: string;
       startDate?: string;
       endDate?: string;
-    }
-  ): Promise<ICallLog[]> {
-    const orgUsers = await prisma.user.findMany({
-      where: { organizationId },
-      select: {
-        name: true,
-        departmentId: true,
-      },
-    });
+    },
+    options?: { limit?: number; offset?: number }
+  ): Promise<{ logs: ICallLog[]; total: number }> {
+    const escapeLike = (s: string) => s.replace(/[%_\\]/g, "\\$&");
 
-    const orgDepartments = await prisma.department.findMany({
-      where: {
-        OR: [
-          { organizationId: organizationId as any },
-          {
-            users: {
-              some: {
-                organizationId,
-              },
-            },
-          },
-        ],
-      },
-      select: {
-        name: true,
-      },
-    });
+    const identSub = Prisma.sql`(
+      SELECT lower(trim(name)) FROM users WHERE organization_id = ${organizationId}
+      UNION
+      SELECT lower(trim(d.name)) FROM departments d
+      WHERE d.organization_id = ${organizationId}
+         OR d.id IN (
+           SELECT DISTINCT department_id FROM users
+           WHERE organization_id = ${organizationId} AND department_id IS NOT NULL
+         )
+    )`;
 
-    const orgUserNames = new Set<string>();
-    const orgDeptNames = new Set<string>();
-    
-    orgUsers.forEach((u: { name: string }) => {
-      orgUserNames.add(u.name.trim());
-      orgUserNames.add(this.normalizeName(u.name));
-    });
-    
-    orgDepartments.forEach((d: { name: string }) => {
-      orgDeptNames.add(d.name.trim());
-      orgDeptNames.add(this.normalizeName(d.name));
-    });
-
-    const allOrgIdentifiers = Array.from(new Set([...orgUserNames, ...orgDeptNames]));
-
-    const whereConditions: any[] = [
-      {
-        OR: [
-          { fromUser: { in: allOrgIdentifiers } },
-          { toUser: { in: allOrgIdentifiers } },
-        ],
-      },
-    ];
+    let where = Prisma.sql`(lower(trim(from_user)) IN ${identSub} OR lower(trim(to_user)) IN ${identSub})`;
 
     if (filters?.sender) {
-      whereConditions.push({
-        OR: [
-          { fromUser: { equals: filters.sender, mode: "insensitive" } },
-          { fromUser: { contains: filters.sender, mode: "insensitive" } },
-        ],
-      });
+      const p = `%${escapeLike(filters.sender)}%`;
+      where = Prisma.sql`${where} AND from_user ILIKE ${p}`;
     }
-
     if (filters?.receiver) {
-      whereConditions.push({
-        OR: [
-          { toUser: { equals: filters.receiver, mode: "insensitive" } },
-          { toUser: { contains: filters.receiver, mode: "insensitive" } },
-        ],
-      });
+      const p = `%${escapeLike(filters.receiver)}%`;
+      where = Prisma.sql`${where} AND to_user ILIKE ${p}`;
+    }
+    if (filters?.startDate) {
+      const start = new Date(filters.startDate);
+      where = Prisma.sql`${where} AND created_at >= ${start}`;
+    }
+    if (filters?.endDate) {
+      const end = new Date(filters.endDate);
+      end.setHours(23, 59, 59, 999);
+      where = Prisma.sql`${where} AND created_at <= ${end}`;
     }
 
-    if (filters?.startDate || filters?.endDate) {
-      const dateFilter: any = {};
-      if (filters.startDate) {
-        dateFilter.gte = new Date(filters.startDate);
-      }
-      if (filters.endDate) {
-        const endDate = new Date(filters.endDate);
-        endDate.setHours(23, 59, 59, 999);
-        dateFilter.lte = endDate;
-      }
-      whereConditions.push({ createdAt: dateFilter });
+    const usePagination = options?.limit != null || options?.offset != null;
+
+    if (usePagination) {
+      const limit = Math.min(2000, Math.max(1, options?.limit ?? 500));
+      const offset = Math.max(0, options?.offset ?? 0);
+
+      const [countResult, logs] = await Promise.all([
+        prisma.$queryRaw<[{ count: number }]>`
+          SELECT COUNT(*)::int as count FROM call_logs WHERE ${where}
+        `,
+        prisma.$queryRaw<any[]>`
+          SELECT id, call_id as "callId", from_user as "fromUser", to_user as "toUser",
+            message, image_url as "imageUrl", status,
+            created_at as "createdAt", accepted_at as "acceptedAt", rejected_at as "rejectedAt"
+          FROM call_logs WHERE ${where}
+          ORDER BY created_at DESC
+          LIMIT ${limit} OFFSET ${offset}
+        `,
+      ]);
+
+      return {
+        logs: logs.map((log: any) => ({
+          id: log.id,
+          call_id: log.callId,
+          from_user: log.fromUser,
+          to_user: log.toUser,
+          message: log.message || undefined,
+          image_url: log.imageUrl || undefined,
+          status: log.status as ICallLog["status"],
+          created_at: log.createdAt,
+          accepted_at: log.acceptedAt || undefined,
+          rejected_at: log.rejectedAt || undefined,
+        })),
+        total: countResult[0]?.count ?? 0,
+      };
     }
 
-    const where: any = whereConditions.length > 1 ? { AND: whereConditions } : whereConditions[0];
+    const logs = await prisma.$queryRaw<any[]>`
+      SELECT id, call_id as "callId", from_user as "fromUser", to_user as "toUser",
+        message, image_url as "imageUrl", status,
+        created_at as "createdAt", accepted_at as "acceptedAt", rejected_at as "rejectedAt"
+      FROM call_logs WHERE ${where}
+      ORDER BY created_at DESC
+    `;
 
-    const logs = await prisma.callLog.findMany({
-      where,
-      orderBy: { createdAt: "desc" },
-    });
-
-    const filteredLogs = logs.filter((log: any) => {
-      const fromUserNormalized = this.normalizeName(log.fromUser);
-      const toUserNormalized = this.normalizeName(log.toUser);
-      const fromUserOriginal = log.fromUser.trim();
-      const toUserOriginal = log.toUser.trim();
-
-      return (
-        orgUserNames.has(fromUserNormalized) ||
-        orgUserNames.has(fromUserOriginal) ||
-        orgDeptNames.has(fromUserNormalized) ||
-        orgDeptNames.has(fromUserOriginal) ||
-        orgUserNames.has(toUserNormalized) ||
-        orgUserNames.has(toUserOriginal) ||
-        orgDeptNames.has(toUserNormalized) ||
-        orgDeptNames.has(toUserOriginal)
-      );
-    });
-
-    return filteredLogs.map((log: any) => ({
-      id: log.id,
-      call_id: log.callId,
-      from_user: log.fromUser,
-      to_user: log.toUser,
-      message: log.message || undefined,
-      image_url: log.imageUrl || undefined,
-      status: log.status as ICallLog["status"],
-      created_at: log.createdAt,
-      accepted_at: log.acceptedAt || undefined,
-      rejected_at: log.rejectedAt || undefined,
-    }));
+    return {
+      logs: logs.map((log: any) => ({
+        id: log.id,
+        call_id: log.callId,
+        from_user: log.fromUser,
+        to_user: log.toUser,
+        message: log.message || undefined,
+        image_url: log.imageUrl || undefined,
+        status: log.status as ICallLog["status"],
+        created_at: log.createdAt,
+        accepted_at: log.acceptedAt || undefined,
+        rejected_at: log.rejectedAt || undefined,
+      })),
+      total: logs.length,
+    };
   }
 
   static async findByFilters(filters: {
@@ -214,7 +191,7 @@ export class CallLogModel {
     receiver?: string;
     startDate?: string;
     endDate?: string;
-  }): Promise<ICallLog[]> {
+  }, options?: { limit?: number; offset?: number }): Promise<{ logs: ICallLog[]; total: number }> {
     const { sender, receiver, startDate, endDate } = filters;
 
     const where: any = {};
@@ -241,25 +218,38 @@ export class CallLogModel {
       }
     }
 
+    const usePagination = options?.limit != null || options?.offset != null;
+    const limit = usePagination ? Math.min(2000, Math.max(1, options?.limit ?? 500)) : undefined;
+    const offset = usePagination ? Math.max(0, options?.offset ?? 0) : undefined;
 
-    const logs = await prisma.callLog.findMany({
+    const findManyArgs: any = {
       where,
-      orderBy: { createdAt: "desc" },
-    });
-    
+      orderBy: { createdAt: "desc" as const },
+    };
+    if (limit != null) findManyArgs.take = limit;
+    if (offset != null) findManyArgs.skip = offset;
 
-    return logs.map((log: any) => ({
-      id: log.id,
-      call_id: log.callId,
-      from_user: log.fromUser,
-      to_user: log.toUser,
-      message: log.message || undefined,
-      image_url: log.imageUrl || undefined,
-      status: log.status as ICallLog["status"],
-      created_at: log.createdAt,
-      accepted_at: log.acceptedAt || undefined,
-      rejected_at: log.rejectedAt || undefined,
-    }));
+    const [logs, total] = await Promise.all([
+      prisma.callLog.findMany(findManyArgs),
+      usePagination ? prisma.callLog.count({ where }) : Promise.resolve(0),
+    ]);
+    const resolvedTotal = usePagination ? total : logs.length;
+
+    return {
+      logs: logs.map((log: any) => ({
+        id: log.id,
+        call_id: log.callId,
+        from_user: log.fromUser,
+        to_user: log.toUser,
+        message: log.message || undefined,
+        image_url: log.imageUrl || undefined,
+        status: log.status as ICallLog["status"],
+        created_at: log.createdAt,
+        accepted_at: log.acceptedAt || undefined,
+        rejected_at: log.rejectedAt || undefined,
+      })),
+      total: resolvedTotal,
+    };
   }
 
   static async findByDateRange(

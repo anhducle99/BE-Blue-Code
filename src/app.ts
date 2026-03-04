@@ -3,6 +3,7 @@ dotenv.config();
 
 import express from "express";
 import cors from "cors";
+import compression from "compression";
 import http from "http";
 import { networkInterfaces } from "os";
 import { CallLogModel } from "./models/CallLog";
@@ -21,6 +22,7 @@ type CallLogRow = {
 };
 import { Server as SocketServer } from "socket.io";
 import { onlineUsers, setIO, callTimers, normalizeName, findSocketByDepartmentName, emitCallLogUpdated } from "./socketStore";
+import { getOrganizationIdForCall } from "./services/orgCache";
 import callRoutes from "./routes/callRoutes";
 import authRoutes from "./routes/authRoutes";
 import departmentRoutes from "./routes/departmentRoutes";
@@ -32,6 +34,7 @@ import incidentCaseRoutes from "./routes/incidentCaseRoutes";
 import miniAppRoutes from "./routes/miniAppRoutes";
 const app = express();
 
+app.use(compression());
 app.use(express.json());
 
 const STATIC_ALLOWED_ORIGINS = [
@@ -217,14 +220,30 @@ io.on("connection", (socket) => {
     }
 
     if (!user && payloadName) {
-      const allUsers = await UserModel.findAll();
-      const normalizedPayloadName = normalizeName(payloadName);
-      user =
-        allUsers.find(
+      user = await UserModel.findByName(payloadName) ?? null;
+      if (!user && payloadName.length >= 2) {
+        const { prisma } = await import("./models/db");
+        const normalizedPayload = normalizeName(payloadName);
+        const prefix = payloadName.slice(0, 50);
+        const candidates = await prisma.user.findMany({
+          where: {
+            OR: [
+              { name: { startsWith: prefix, mode: "insensitive" } },
+              { email: { startsWith: prefix, mode: "insensitive" } },
+            ],
+          },
+          select: { id: true, name: true, email: true },
+          take: 30,
+        });
+        const matched = candidates.find(
           (u) =>
-            normalizeName(String(u.name || "")) === normalizedPayloadName ||
-            normalizeName(String(u.email || "")) === normalizedPayloadName
-        ) || null;
+            normalizeName(String(u.name || "")) === normalizedPayload ||
+            normalizeName(String(u.email || "")) === normalizedPayload
+        );
+        if (matched?.id) {
+          user = await UserModel.findById(matched.id);
+        }
+      }
     }
 
     const safeName = (user?.name || data?.name || "").toString().trim();
@@ -262,36 +281,7 @@ io.on("connection", (socket) => {
  
       const updatedLog = await CallLogModel.updateStatus(callId, toDept, "accepted");
       if (updatedLog) {
-        const { UserModel } = await import("./models/User");
-        const { prisma } = await import("./models/db");
-
-        let senderUser = null;
-        const fromUserId = parseInt(updatedLog.from_user);
-        if (!isNaN(fromUserId)) {
-          senderUser = await UserModel.findById(fromUserId);
-        }
-        if (!senderUser) {
-          const userByName = await prisma.user.findFirst({
-            where: { name: updatedLog.from_user },
-            select: { organizationId: true }
-          });
-          if (userByName) senderUser = { organization_id: userByName.organizationId };
-        }
-
-        let receiverUser = null;
-        const toUserId = parseInt(updatedLog.to_user);
-        if (!isNaN(toUserId)) {
-          receiverUser = await UserModel.findById(toUserId);
-        }
-        if (!receiverUser) {
-          const userByName = await prisma.user.findFirst({
-            where: { name: updatedLog.to_user },
-            select: { organizationId: true }
-          });
-          if (userByName) receiverUser = { organization_id: userByName.organizationId };
-        }
-
-        const organizationId = senderUser?.organization_id || receiverUser?.organization_id;
+        const organizationId = await getOrganizationIdForCall(updatedLog.from_user, updatedLog.to_user);
 
         const callLogData = {
           id: updatedLog.id,
@@ -339,36 +329,7 @@ io.on("connection", (socket) => {
 
       const updatedLog = await CallLogModel.updateStatus(callId, toDept, "rejected");
       if (updatedLog) {
-        const { UserModel } = await import("./models/User");
-        const { prisma } = await import("./models/db");
-
-        let senderUser = null;
-        const fromUserId = parseInt(updatedLog.from_user);
-        if (!isNaN(fromUserId)) {
-          senderUser = await UserModel.findById(fromUserId);
-        }
-        if (!senderUser) {
-          const userByName = await prisma.user.findFirst({
-            where: { name: updatedLog.from_user },
-            select: { organizationId: true }
-          });
-          if (userByName) senderUser = { organization_id: userByName.organizationId };
-        }
-
-        let receiverUser = null;
-        const toUserId = parseInt(updatedLog.to_user);
-        if (!isNaN(toUserId)) {
-          receiverUser = await UserModel.findById(toUserId);
-        }
-        if (!receiverUser) {
-          const userByName = await prisma.user.findFirst({
-            where: { name: updatedLog.to_user },
-            select: { organizationId: true }
-          });
-          if (userByName) receiverUser = { organization_id: userByName.organizationId };
-        }
-
-        const organizationId = senderUser?.organization_id || receiverUser?.organization_id;
+        const organizationId = await getOrganizationIdForCall(updatedLog.from_user, updatedLog.to_user);
 
         const callLogData = {
           id: updatedLog.id,
@@ -412,23 +373,16 @@ io.on("connection", (socket) => {
   socket.on("callTimeout", async ({ callId, toDept }) => {
     try {
       const { prisma } = await import("./models/db");
-      const logs = await prisma.callLog.findMany({
-        where: { callId },
+      const updated = await prisma.callLog.updateMany({
+        where: { callId, status: "pending" },
+        data: { status: "timeout", rejectedAt: new Date() },
       });
-      
-      let updatedLogs = [];
-      if (logs.length > 0) {
-        for (const log of logs) {
-          if (log.status === "pending") {
-            const updated = await CallLogModel.updateStatus(callId, log.toUser, "timeout");
-            if (updated) updatedLogs.push(updated);
-          }
-        }
-      } else {
-        const updatedLog = await CallLogModel.updateStatus(callId, toDept, "timeout");
-        if (updatedLog) updatedLogs.push(updatedLog);
+      if (updated.count === 0) {
+        return;
       }
-      
+      const updatedLogs = await prisma.callLog.findMany({
+        where: { callId, status: "timeout" },
+      });
       const updatedLog = updatedLogs.length > 0 ? updatedLogs[0] : null;
       if (updatedLog) {
         const timer = callTimers.get(callId);
@@ -437,68 +391,38 @@ io.on("connection", (socket) => {
           callTimers.delete(callId);
         }
 
-        const { UserModel } = await import("./models/User");
-        const { prisma } = await import("./models/db");
+        const organizationId = await getOrganizationIdForCall(updatedLog.fromUser, updatedLog.toUser);
 
-        let senderUser = null;
-        const fromUserId = parseInt(updatedLog.from_user);
-        if (!isNaN(fromUserId)) {
-          senderUser = await UserModel.findById(fromUserId);
-        }
-        if (!senderUser) {
-          const userByName = await prisma.user.findFirst({
-            where: { name: updatedLog.from_user },
-            select: { organizationId: true }
-          });
-          if (userByName) senderUser = { organization_id: userByName.organizationId };
-        }
-
-        let receiverUser = null;
-        const toUserId = parseInt(updatedLog.to_user);
-        if (!isNaN(toUserId)) {
-          receiverUser = await UserModel.findById(toUserId);
-        }
-        if (!receiverUser) {
-          const userByName = await prisma.user.findFirst({
-            where: { name: updatedLog.to_user },
-            select: { organizationId: true }
-          });
-          if (userByName) receiverUser = { organization_id: userByName.organizationId };
-        }
-
-        const organizationId = senderUser?.organization_id || receiverUser?.organization_id;
-
-        const callLogData = {
-          id: updatedLog.id,
-          call_id: updatedLog.call_id,
-          from_user: updatedLog.from_user,
-          to_user: updatedLog.to_user,
-          message: updatedLog.message,
-          image_url: updatedLog.image_url,
-          status: updatedLog.status,
-          created_at: updatedLog.created_at,
-          accepted_at: updatedLog.accepted_at,
-          rejected_at: updatedLog.rejected_at,
-        };
-
-        if (organizationId) {
-          const roomName = `organization_${organizationId}`;
-          io.to(roomName).emit("callStatusUpdate", { 
-            callId, 
-            toDept: updatedLog.to_user,
-            toUser: updatedLog.to_user,
-            status: "timeout" 
-          });
-        } else {
-          io.emit("callStatusUpdate", { 
-            callId, 
-            toDept: updatedLog.to_user,
-            toUser: updatedLog.to_user,
-            status: "timeout" 
-          });
-        }
-
-        emitCallLogUpdated(callLogData, organizationId ?? undefined);
+        updatedLogs.forEach((log: CallLogRow) => {
+          const callLogData = {
+            id: log.id,
+            call_id: log.callId,
+            from_user: log.fromUser,
+            to_user: log.toUser,
+            message: log.message ?? undefined,
+            image_url: log.imageUrl ?? undefined,
+            status: log.status,
+            created_at: log.createdAt,
+            accepted_at: log.acceptedAt ?? undefined,
+            rejected_at: log.rejectedAt ?? undefined,
+          };
+          if (organizationId) {
+            io.to(`organization_${organizationId}`).emit("callStatusUpdate", {
+              callId,
+              toDept: log.toUser,
+              toUser: log.toUser,
+              status: "timeout",
+            });
+          } else {
+            io.emit("callStatusUpdate", {
+              callId,
+              toDept: log.toUser,
+              toUser: log.toUser,
+              status: "timeout",
+            });
+          }
+          emitCallLogUpdated(callLogData, organizationId ?? undefined);
+        });
       }
     } catch (err) {
     }
@@ -553,35 +477,7 @@ io.on("connection", (socket) => {
         const updatedLogs = await prisma.callLog.findMany({
           where: { callId },
         });
-        const { UserModel } = await import("./models/User");
-
-        let senderUser = null;
-        const fromUserId = parseInt(firstCallLog.fromUser);
-        if (!isNaN(fromUserId)) {
-          senderUser = await UserModel.findById(fromUserId);
-        }
-        if (!senderUser) {
-          const userByName = await prisma.user.findFirst({
-            where: { name: firstCallLog.fromUser },
-            select: { organizationId: true }
-          });
-          if (userByName) senderUser = { organization_id: userByName.organizationId };
-        }
-
-        let receiverUser = null;
-        const toUserId = parseInt(firstCallLog.toUser);
-        if (!isNaN(toUserId)) {
-          receiverUser = await UserModel.findById(toUserId);
-        }
-        if (!receiverUser) {
-          const userByName = await prisma.user.findFirst({
-            where: { name: firstCallLog.toUser },
-            select: { organizationId: true }
-          });
-          if (userByName) receiverUser = { organization_id: userByName.organizationId };
-        }
-
-        const organizationId = senderUser?.organization_id || receiverUser?.organization_id;
+        const organizationId = await getOrganizationIdForCall(firstCallLog.fromUser, firstCallLog.toUser);
 
         const targetNames = targets && Array.isArray(targets) 
           ? targets 

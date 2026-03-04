@@ -105,6 +105,20 @@ export class UserModel {
     return sanitizeUser(user, includePassword);
   }
 
+  /** Single-query lookup by name (e.g. socket register fallback). Uses case-insensitive match. */
+  static async findByName(name: string): Promise<IUser | null> {
+    if (!name || typeof name !== "string" || !name.trim()) return null;
+    const user = await prisma.user.findFirst({
+      where: { name: { equals: name.trim(), mode: "insensitive" } },
+      include: {
+        department: { select: { name: true } },
+        organization: { select: { name: true } },
+      },
+    });
+    if (!user) return null;
+    return sanitizeUser(user, false);
+  }
+
   static async create(user: IUser): Promise<IUser> {
     const {
       name,
@@ -160,6 +174,14 @@ export class UserModel {
       updateData.isAdminView = user.is_admin_view;
     if (user.is_floor_account !== undefined)
       updateData.isFloorAccount = user.is_floor_account;
+    if (user.zalo_user_id !== undefined)
+      updateData.zaloUserId = user.zalo_user_id;
+    if (user.zalo_display_name !== undefined)
+      updateData.zaloDisplayName = user.zalo_display_name;
+    if (user.zalo_verified !== undefined)
+      updateData.zaloVerified = user.zalo_verified;
+    if (user.zalo_linked_at !== undefined)
+      updateData.zaloLinkedAt = user.zalo_linked_at;
 
     if (user.password) {
       updateData.password = await bcrypt.hash(user.password, 10);
@@ -168,6 +190,24 @@ export class UserModel {
     const updated = await prisma.user.update({
       where: { id },
       data: updateData,
+      include: {
+        department: { select: { name: true } },
+        organization: { select: { name: true } },
+      },
+    });
+
+    return sanitizeUser(updated, false);
+  }
+
+  static async unlinkZalo(id: number): Promise<IUser> {
+    const updated = await prisma.user.update({
+      where: { id },
+      data: {
+        zaloUserId: null,
+        zaloDisplayName: null,
+        zaloVerified: false,
+        zaloLinkedAt: null,
+      },
       include: {
         department: { select: { name: true } },
         organization: { select: { name: true } },
