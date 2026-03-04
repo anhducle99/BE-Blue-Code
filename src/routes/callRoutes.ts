@@ -3,6 +3,7 @@ import { CallLogModel } from "../models/CallLog";
 import { IncidentCaseModel } from "../models/IncidentCase";
 import { prisma } from "../models/db";
 import { getIO, onlineUsers, callTimers, normalizeName, emitCallLogCreated, emitCallLogUpdated } from "../socketStore";
+import { getOrganizationIdForCall } from "../services/orgCache";
 import { randomUUID } from "crypto";
 import { authMiddleware } from "../middleware/authMiddleware";
 import { validateCallPermission } from "../middleware/validateCallPermission";
@@ -53,11 +54,21 @@ router.post("/", authMiddleware, validateCallPermission, async (req, res) => {
       });
     }
 
+    const canonicalFrom =
+      orgDepartments.find(d => normalizeName(d.name) === normalizedFromDept || d.name.trim() === fromDept.trim())?.name
+      ?? orgUsers.find(u => normalizeName(u.name) === normalizedFromDept || u.name.trim() === fromDept.trim())?.name
+      ?? fromDept;
+
     const targetNames = targetKeys.map((key: string) => key.split("_")[0]);
     const normalizedTargetNames = targetNames.map(normalizeName);
-    const invalidTargets = normalizedTargetNames.filter(
-      (name: string) => !orgNames.has(name) && !orgNames.has(targetNames[normalizedTargetNames.indexOf(name)].trim())
-    );
+    const invalidTargets: string[] = [];
+    for (let i = 0; i < normalizedTargetNames.length; i++) {
+      const normalized = normalizedTargetNames[i];
+      const rawTarget = targetNames[i];
+      if (!orgNames.has(normalized) && !orgNames.has(rawTarget.trim())) {
+        invalidTargets.push(normalized);
+      }
+    }
 
     if (invalidTargets.length > 0) {
       return res.status(403).json({
@@ -74,51 +85,54 @@ router.post("/", authMiddleware, validateCallPermission, async (req, res) => {
     const callId = randomUUID();
     type CreateEntry = { payload: Parameters<typeof CallLogModel.create>[0]; targetUser: ReturnType<typeof onlineUsers.get> };
     const entries: CreateEntry[] = [];
+    const deptUsersMap = new Map<string, typeof orgUsers>();
+
+    orgUsers.forEach((u) => {
+      if (u.department_id == null) return;
+      const key = String(u.department_id);
+      const list = deptUsersMap.get(key);
+      if (list) {
+        list.push(u);
+      } else {
+        deptUsersMap.set(key, [u]);
+      }
+    });
 
     for (const key of targetKeys) {
       const targetName = key.split("_")[0];
       const normalizedTargetName = normalizeName(targetName);
-      const isDepartment = orgDepartments.some(
+      const department = orgDepartments.find(
         (dept) => normalizeName(dept.name) === normalizedTargetName || dept.name.trim() === targetName
       );
 
-      if (isDepartment) {
-        const department = orgDepartments.find(
-          (dept) => normalizeName(dept.name) === normalizedTargetName || dept.name.trim() === targetName
-        );
-        if (department) {
-          const departmentUsers = orgUsers.filter(
-            (u) => {
-              const deptIdMatch = u.department_id === department.id ||
-                  u.department_id === Number(department.id) ||
-                  Number(u.department_id) === department.id ||
-                  String(u.department_id) === String(department.id);
-              return deptIdMatch && u.department_id != null;
-            }
-          );
-          for (const deptUser of departmentUsers) {
-            const userKey = `${deptUser.name}_${deptUser.department_name || deptUser.name}`;
-            const targetUser = onlineUsers.get(userKey);
-            entries.push({
-              payload: {
-                call_id: callId,
-                from_user: fromDept,
-                to_user: deptUser.name,
-                message: message || undefined,
-                image_url: image_url || undefined,
-                status: "pending",
-              },
-              targetUser: targetUser ?? undefined,
-            });
-          }
+      if (department) {
+        const departmentUsers = deptUsersMap.get(String(department.id)) || [];
+        for (const deptUser of departmentUsers) {
+          const userKey = `${deptUser.name}_${deptUser.department_name || deptUser.name}`;
+          const targetUser = onlineUsers.get(userKey);
+          entries.push({
+            payload: {
+              call_id: callId,
+              from_user: canonicalFrom,
+              to_user: deptUser.name,
+              message: message || undefined,
+              image_url: image_url || undefined,
+              status: "pending",
+            },
+            targetUser: targetUser ?? undefined,
+          });
         }
       } else {
+        const matchedTargetUser = orgUsers.find(
+          (u) => normalizeName(u.name) === normalizedTargetName || u.name.trim() === targetName.trim()
+        );
+        const canonicalTarget = matchedTargetUser?.name ?? targetName;
         const targetUser = onlineUsers.get(key);
         entries.push({
           payload: {
             call_id: callId,
-            from_user: fromDept,
-            to_user: targetName,
+            from_user: canonicalFrom,
+            to_user: canonicalTarget,
             message: message || undefined,
             image_url: image_url || undefined,
             status: "pending",
@@ -129,37 +143,35 @@ router.post("/", authMiddleware, validateCallPermission, async (req, res) => {
     }
 
     const createdLogs = await prisma.$transaction(async (tx) => {
-      const out: any[] = [];
-      for (const e of entries) {
-        const p = e.payload;
-        const created = await (tx as any).callLog.create({
-          data: {
-            callId: p.call_id,
-            fromUser: p.from_user,
-            toUser: p.to_user,
-            message: p.message,
-            imageUrl: p.image_url,
-            status: p.status || "pending",
-          },
-        });
-        out.push({
-          id: created.id,
-          call_id: created.callId,
-          from_user: created.fromUser,
-          to_user: created.toUser,
-          message: created.message ?? undefined,
-          image_url: created.imageUrl ?? undefined,
-          status: created.status,
-          created_at: created.createdAt,
-          accepted_at: created.acceptedAt ?? undefined,
-          rejected_at: created.rejectedAt ?? undefined,
-        });
-      }
-      return out;
+      const data = entries.map((e) => ({
+        callId,
+        fromUser: e.payload.from_user,
+        toUser: e.payload.to_user,
+        message: e.payload.message ?? null,
+        imageUrl: e.payload.image_url ?? null,
+        status: (e.payload.status || "pending") as "pending",
+      }));
+      await (tx as any).callLog.createMany({ data });
+      const created = await (tx as any).callLog.findMany({
+        where: { callId },
+        orderBy: { id: "asc" },
+      });
+      return created.map((c: any) => ({
+        id: c.id,
+        call_id: c.callId,
+        from_user: c.fromUser,
+        to_user: c.toUser,
+        message: c.message ?? undefined,
+        image_url: c.imageUrl ?? undefined,
+        status: c.status,
+        created_at: c.createdAt,
+        accepted_at: c.acceptedAt ?? undefined,
+        rejected_at: c.rejectedAt ?? undefined,
+      }));
     });
 
-    createdLogs.forEach((callLog: any, i: number) => {
-      const targetUser = entries[i]?.targetUser;
+    entries.forEach((entry) => {
+      const targetUser = entry?.targetUser;
       if (targetUser) {
         io.to(targetUser.socketId).emit("incomingCall", {
           callId,
@@ -172,7 +184,9 @@ router.post("/", authMiddleware, validateCallPermission, async (req, res) => {
       }
     });
 
-    const receiverNames = [...new Set(createdLogs.map((c: any) => c.to_user?.trim()).filter(Boolean))];
+    const receiverNames: string[] = Array.from(
+      new Set(createdLogs.map((c: { to_user?: string | null }) => String(c.to_user ?? "").trim()).filter(Boolean))
+    );
     const callLogIds = createdLogs.map((c: any) => c.id);
     const reporterCount = new Set(createdLogs.map((c: any) => (c.from_user || "").trim()).filter(Boolean)).size;
     if (receiverNames.length > 0 && callLogIds.length > 0) {
@@ -200,10 +214,14 @@ router.post("/", authMiddleware, validateCallPermission, async (req, res) => {
       try {
         const accepted = await prisma.callLog.findFirst({ where: { callId, status: "accepted" } });
         if (accepted) return;
-        const pending = await prisma.callLog.findMany({ where: { callId, status: "pending" } });
-        for (const log of pending) {
-          await prisma.callLog.update({ where: { id: log.id }, data: { status: "timeout", rejectedAt: new Date() } });
-        }
+        const updated = await prisma.callLog.updateMany({
+          where: { callId, status: "pending" },
+          data: { status: "timeout", rejectedAt: new Date() },
+        });
+        if (updated.count === 0) return;
+        const pending = await prisma.callLog.findMany({
+          where: { callId, status: "timeout" },
+        });
         const ioRef = getIO();
         if (ioRef && organizationId) {
           pending.forEach((log) => {
@@ -246,9 +264,10 @@ router.get("/", authMiddleware, async (req, res) => {
     }
 
     const { department } = req.query;
-    const logs = await CallLogModel.findByOrganization(
+    const { logs } = await CallLogModel.findByOrganization(
       user.organization_id,
-      department ? { receiver: department as string } : undefined
+      department ? { receiver: department as string } : undefined,
+      { limit: 2000 }
     );
 
     res.json({ success: true, data: logs });
@@ -342,33 +361,10 @@ router.post("/:callId/cancel", authMiddleware, async (req, res) => {
 
     const io = getIO();
     if (io) {
-      let senderUser = null;
-      const fromUserId = parseInt(callLog.fromUser);
-      if (!isNaN(fromUserId)) {
-        senderUser = await UserModel.findById(fromUserId);
-      }
-      if (!senderUser) {
-        const userByName = await prisma.user.findFirst({
-          where: { name: callLog.fromUser },
-          select: { organizationId: true }
-        });
-        if (userByName) senderUser = { organization_id: userByName.organizationId };
-      }
-
-      let receiverUser = null;
-      const toUserId = parseInt(callLog.toUser);
-      if (!isNaN(toUserId)) {
-        receiverUser = await UserModel.findById(toUserId);
-      }
-      if (!receiverUser) {
-        const userByName = await prisma.user.findFirst({
-          where: { name: callLog.toUser },
-          select: { organizationId: true }
-        });
-        if (userByName) receiverUser = { organization_id: userByName.organizationId };
-      }
-
-      const organizationId = senderUser?.organization_id || receiverUser?.organization_id;
+      const organizationId = await getOrganizationIdForCall(
+        callLog.fromUser,
+        callLog.toUser
+      );
 
       const emittedLogIds = new Set<number>();
       

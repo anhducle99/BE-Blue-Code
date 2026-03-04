@@ -1,6 +1,6 @@
 import { Request, Response } from "express";
+import { Prisma } from "@prisma/client";
 import { prisma } from "../models/db";
-import { CallLogModel } from "../models/CallLog";
 
 function getUTCDateRangeVN(startStr: string, endStr: string) {
   let start = new Date(startStr);
@@ -69,12 +69,6 @@ export const getDepartmentStats = async (req: Request, res: Response) => {
 
     let departments: any[] = [];
     
-    const allDepartmentsInDB = await prisma.department.findMany({
-      orderBy: { id: "asc" },
-    });
-    allDepartmentsInDB.forEach((d: any) => {
-    });
-    
     const deptWhere = organizationId != null ? { organizationId } : {};
     try {
       departments = await prisma.department.findMany({
@@ -89,9 +83,7 @@ export const getDepartmentStats = async (req: Request, res: Response) => {
         where: { organizationId },
         select: { departmentId: true, name: true },
       });
-        orgUsersForDepts.forEach((u: any) => {
-      });
-      
+
       const orgDepartmentIds = Array.from(
         new Set(
           orgUsersForDepts
@@ -114,9 +106,6 @@ export const getDepartmentStats = async (req: Request, res: Response) => {
       }
     }
     
-    departments.forEach((d: any) => {
-    });
-
     const orgUsersWhere = organizationId != null ? { organizationId } : {};
     const orgUsers = await prisma.user.findMany({
       where: orgUsersWhere as any,
@@ -138,21 +127,38 @@ export const getDepartmentStats = async (req: Request, res: Response) => {
     const orgDeptNames = departments.map((d: { name: string }) => d.name);
     const allOrgIdentifiers = [...orgUserNames, ...orgDeptNames];
 
-    const logsWhere: any = {
-      createdAt: {
-        gte: new Date(start),
-        lte: new Date(end),
-      },
-    };
-    if (allOrgIdentifiers.length > 0) {
-      logsWhere.OR = [
-        { fromUser: { in: allOrgIdentifiers } },
-        { toUser: { in: allOrgIdentifiers } },
-      ];
+    type AggRow = { fromUser: string; toUser: string; status: string; cnt: number; acceptedCnt: number };
+    let aggregated: AggRow[] = [];
+    if (organizationId != null && allOrgIdentifiers.length > 0) {
+      aggregated = await prisma.$queryRaw<AggRow[]>`
+        SELECT from_user as "fromUser", to_user as "toUser", status,
+          COUNT(*)::int as cnt,
+          SUM(CASE WHEN accepted_at IS NOT NULL THEN 1 ELSE 0 END)::int as "acceptedCnt"
+        FROM call_logs
+        WHERE created_at >= ${new Date(start)}::timestamptz
+          AND created_at <= ${new Date(end)}::timestamptz
+          AND (
+            lower(trim(from_user)) IN (SELECT lower(trim(name)) FROM users WHERE organization_id = ${organizationId})
+            OR lower(trim(to_user)) IN (SELECT lower(trim(name)) FROM users WHERE organization_id = ${organizationId})
+            OR lower(trim(from_user)) IN (SELECT lower(trim(name)) FROM departments WHERE organization_id = ${organizationId})
+            OR lower(trim(to_user)) IN (SELECT lower(trim(name)) FROM departments WHERE organization_id = ${organizationId})
+          )
+        GROUP BY from_user, to_user, status
+      `;
+    } else if (organizationId == null && allOrgIdentifiers.length > 0) {
+      const lowerIds = allOrgIdentifiers.map((id) => id.toLowerCase().trim());
+      aggregated = await prisma.$queryRaw<AggRow[]>`
+        SELECT from_user as "fromUser", to_user as "toUser", status,
+          COUNT(*)::int as cnt,
+          SUM(CASE WHEN accepted_at IS NOT NULL THEN 1 ELSE 0 END)::int as "acceptedCnt"
+        FROM call_logs
+        WHERE created_at >= ${new Date(start)}::timestamptz
+          AND created_at <= ${new Date(end)}::timestamptz
+          AND (lower(trim(from_user)) IN (${Prisma.join(lowerIds)})
+               OR lower(trim(to_user)) IN (${Prisma.join(lowerIds)}))
+        GROUP BY from_user, to_user, status
+      `;
     }
-    const logs = await prisma.callLog.findMany({
-      where: logsWhere,
-    });
 
     const allUsers = orgUsers;
 
@@ -167,7 +173,7 @@ export const getDepartmentStats = async (req: Request, res: Response) => {
       deptByNameMap.set(dept.name.toLowerCase().trim(), dept);
     });
     
-    type UserRow = { name: string; email?: string | null; departmentId?: number | null };
+    type UserRow = { name: string; email?: string | null; departmentId?: number | null; isFloorAccount?: boolean | null };
     allUsers.forEach((user: UserRow) => {
       userByNameMap.set(user.name.toLowerCase().trim(), user);
       if (user.email) {
@@ -181,19 +187,27 @@ export const getDepartmentStats = async (req: Request, res: Response) => {
       }
     });
 
+    type LookupResult = { user: UserRow | null; department: any | null };
+    const lookupCache = new Map<string, LookupResult>();
     const findUserOrDept = (identifier: string) => {
       const key = identifier.toLowerCase().trim();
+      const cached = lookupCache.get(key);
+      if (cached) return cached;
       
       let user = userByNameMap.get(key);
       if (user) {
         const dept = user.departmentId ? deptByIdMap.get(user.departmentId) || null : null;
-        return { user, department: dept };
+        const result: LookupResult = { user, department: dept };
+        lookupCache.set(key, result);
+        return result;
       }
       
       user = userByEmailMap.get(key);
       if (user) {
         const dept = user.departmentId ? deptByIdMap.get(user.departmentId) || null : null;
-        return { user, department: dept };
+        const result: LookupResult = { user, department: dept };
+        lookupCache.set(key, result);
+        return result;
       }
       
       const dept = deptByNameMap.get(key);
@@ -202,10 +216,14 @@ export const getDepartmentStats = async (req: Request, res: Response) => {
         const floorAccountUser = deptUsers.find(u => u.isFloorAccount === true);
         const nonFloorAccountUser = deptUsers.find(u => !u.isFloorAccount);
         const deptUser = floorAccountUser || nonFloorAccountUser || deptUsers[0];
-        return { user: deptUser || null, department: dept };
+        const result: LookupResult = { user: deptUser || null, department: dept };
+        lookupCache.set(key, result);
+        return result;
       }
       
-      return { user: null, department: null };
+      const result: LookupResult = { user: null, department: null };
+      lookupCache.set(key, result);
+      return result;
     };
 
     const deptMap: Record<number, any> = {};
@@ -219,90 +237,42 @@ export const getDepartmentStats = async (req: Request, res: Response) => {
       };
     });
     
-    if (departments.length > 0) {
-      departments.slice(0, 5).forEach((d: any) => {
-      });
-    }
-    
-    if (allUsers.length > 0) {
-      allUsers.slice(0, 10).forEach((u: any) => {
-      });
-    }
-    
-    if (logs.length > 0) {
-      logs.slice(0, 10).forEach((log: any, idx: number) => {
-      });
-    }
-    
-    let processedCount = 0;
-    let sentCount = 0;
-    let receivedCount = 0;
-    let skippedNoSender = 0;
-    let skippedNoReceiver = 0;
-    let skippedSenderNotFloor = 0;
-    let skippedNoReceiverDept = 0;
-    let skippedNotAccepted = 0;
-    let skippedReceiverIsFloor = 0;
-    
-    type CallLogRow = { fromUser: string; toUser: string; [key: string]: any };
-    logs.forEach((log: CallLogRow, index: number) => {
-      const senderInfo = findUserOrDept(log.fromUser);
-      const receiverInfo = findUserOrDept(log.toUser);
+    type CallLogRow = { fromUser: string; toUser: string; status: string; cnt: number; acceptedCnt: number };
+    aggregated.forEach((row: CallLogRow) => {
+      const senderInfo = findUserOrDept(row.fromUser);
+      const receiverInfo = findUserOrDept(row.toUser);
       
       const senderUser = senderInfo.user;
       const receiverUser = receiverInfo.user;
       const receiverDept = receiverInfo.department;
 
-      if (index < 10) {
-        if (senderUser) {
-        } else {
-        }
-        if (receiverUser) {
-        }
-        if (receiverDept) {
-        } else {
-        }
+      if (
+        senderUser &&
+        senderUser.isFloorAccount === true &&
+        receiverDept &&
+        deptMap[receiverDept.id]
+      ) {
+        const deptId = receiverDept.id;
+        deptMap[deptId].sent += row.cnt;
       }
 
-    
-      if (!senderUser) {
-        skippedNoSender++;
-      } else if (senderUser.isFloorAccount !== true) {
-        skippedSenderNotFloor++;
-      } else if (!receiverDept) {
-        skippedNoReceiverDept++;
-      } else if (!deptMap[receiverDept.id]) {
-        skippedNoReceiverDept++;
-      } else {
+      if (
+        receiverDept &&
+        deptMap[receiverDept.id] &&
+        receiverUser &&
+        receiverUser.isFloorAccount !== true &&
+        receiverUser.departmentId === receiverDept.id
+      ) {
         const deptId = receiverDept.id;
-        deptMap[deptId].sent += 1;
-        sentCount++;
+        if (row.status === "accepted") {
+          deptMap[deptId].received += row.cnt;
+        } else if (row.acceptedCnt > 0) {
+          deptMap[deptId].received += row.acceptedCnt;
+        }
       }
-
-      if (!receiverDept) {
-        skippedNoReceiver++;
-      } else if (!deptMap[receiverDept.id]) {
-        skippedNoReceiver++;
-      } else if (log.status !== "accepted" && log.acceptedAt === null) {
-        skippedNotAccepted++;
-      } else if (!receiverUser) {
-        skippedNoReceiver++;
-      } else if (receiverUser.isFloorAccount === true) {
-        skippedReceiverIsFloor++;
-      } else if (receiverUser.departmentId !== receiverDept.id) {
-        skippedNoReceiver++;
-      } else {
-        const deptId = receiverDept.id;
-        deptMap[deptId].received += 1;
-        receivedCount++;
-      }
-      
-      processedCount++;
     });
 
     const deptStats = Object.values(deptMap);
-    deptStats.forEach((dept: any) => {
-    });
     
     return res.json(deptStats);
   } catch (err: any) {
@@ -352,13 +322,6 @@ export const getGroupStats = async (req: Request, res: Response) => {
       endDate as string
     );
 
-    const organization = organizationId != null
-      ? await prisma.organization.findUnique({
-          where: { id: organizationId },
-          select: { name: true },
-        })
-      : null;
-    const organizationName = organization?.name || (organizationId != null ? `Organization ${organizationId}` : "Toàn hệ thống");
     let departments: any[] = [];
     
     const groupDeptWhere = organizationId != null ? { organizationId } : {};
@@ -415,21 +378,38 @@ export const getGroupStats = async (req: Request, res: Response) => {
     const orgDeptNames = departments.map((d: { name: string }) => d.name);
     const allOrgIdentifiers = [...orgUserNames, ...orgDeptNames];
 
-    const groupLogsWhere: any = {
-      createdAt: {
-        gte: new Date(start),
-        lte: new Date(end),
-      },
-    };
-    if (allOrgIdentifiers.length > 0) {
-      groupLogsWhere.OR = [
-        { fromUser: { in: allOrgIdentifiers } },
-        { toUser: { in: allOrgIdentifiers } },
-      ];
+    type AggRowGroup = { fromUser: string; toUser: string; status: string; cnt: number; acceptedCnt: number };
+    let aggregated: AggRowGroup[] = [];
+    if (organizationId != null && allOrgIdentifiers.length > 0) {
+      aggregated = await prisma.$queryRaw<AggRowGroup[]>`
+        SELECT from_user as "fromUser", to_user as "toUser", status,
+          COUNT(*)::int as cnt,
+          SUM(CASE WHEN accepted_at IS NOT NULL THEN 1 ELSE 0 END)::int as "acceptedCnt"
+        FROM call_logs
+        WHERE created_at >= ${new Date(start)}::timestamptz
+          AND created_at <= ${new Date(end)}::timestamptz
+          AND (
+            lower(trim(from_user)) IN (SELECT lower(trim(name)) FROM users WHERE organization_id = ${organizationId})
+            OR lower(trim(to_user)) IN (SELECT lower(trim(name)) FROM users WHERE organization_id = ${organizationId})
+            OR lower(trim(from_user)) IN (SELECT lower(trim(name)) FROM departments WHERE organization_id = ${organizationId})
+            OR lower(trim(to_user)) IN (SELECT lower(trim(name)) FROM departments WHERE organization_id = ${organizationId})
+          )
+        GROUP BY from_user, to_user, status
+      `;
+    } else if (organizationId == null && allOrgIdentifiers.length > 0) {
+      const lowerIds = allOrgIdentifiers.map((id) => id.toLowerCase().trim());
+      aggregated = await prisma.$queryRaw<AggRowGroup[]>`
+        SELECT from_user as "fromUser", to_user as "toUser", status,
+          COUNT(*)::int as cnt,
+          SUM(CASE WHEN accepted_at IS NOT NULL THEN 1 ELSE 0 END)::int as "acceptedCnt"
+        FROM call_logs
+        WHERE created_at >= ${new Date(start)}::timestamptz
+          AND created_at <= ${new Date(end)}::timestamptz
+          AND (lower(trim(from_user)) IN (${Prisma.join(lowerIds)})
+               OR lower(trim(to_user)) IN (${Prisma.join(lowerIds)}))
+        GROUP BY from_user, to_user, status
+      `;
     }
-    const logs = await prisma.callLog.findMany({
-      where: groupLogsWhere,
-    });
 
     const allUsers = orgUsers;
     const userByNameMap = new Map<string, any>();
@@ -443,7 +423,7 @@ export const getGroupStats = async (req: Request, res: Response) => {
       deptByNameMap.set(dept.name.toLowerCase().trim(), dept);
     });
 
-    type UserRowGroup = { name: string; email?: string | null; departmentId?: number | null };
+    type UserRowGroup = { name: string; email?: string | null; departmentId?: number | null; isFloorAccount?: boolean | null };
     allUsers.forEach((user: UserRowGroup) => {
       userByNameMap.set(user.name.toLowerCase().trim(), user);
       if (user.email) {
@@ -457,19 +437,27 @@ export const getGroupStats = async (req: Request, res: Response) => {
       }
     });
 
+    type LookupResultGroup = { user: UserRowGroup | null; department: any | null };
+    const lookupCache = new Map<string, LookupResultGroup>();
     const findUserOrDept = (identifier: string) => {
       const key = identifier.toLowerCase().trim();
+      const cached = lookupCache.get(key);
+      if (cached) return cached;
       
       let user = userByNameMap.get(key);
       if (user) {
         const dept = user.departmentId ? deptByIdMap.get(user.departmentId) : null;
-        return { user, department: dept };
+        const result: LookupResultGroup = { user, department: dept };
+        lookupCache.set(key, result);
+        return result;
       }
       
       user = userByEmailMap.get(key);
       if (user) {
         const dept = user.departmentId ? deptByIdMap.get(user.departmentId) : null;
-        return { user, department: dept };
+        const result: LookupResultGroup = { user, department: dept };
+        lookupCache.set(key, result);
+        return result;
       }
       
       const dept = deptByNameMap.get(key);
@@ -478,10 +466,14 @@ export const getGroupStats = async (req: Request, res: Response) => {
         const floorAccountUser = deptUsers.find(u => u.isFloorAccount === true);
         const nonFloorAccountUser = deptUsers.find(u => !u.isFloorAccount);
         const deptUser = floorAccountUser || nonFloorAccountUser || deptUsers[0];
-        return { user: deptUser || null, department: dept };
+        const result: LookupResultGroup = { user: deptUser || null, department: dept };
+        lookupCache.set(key, result);
+        return result;
       }
       
-      return { user: null, department: null };
+      const result: LookupResultGroup = { user: null, department: null };
+      lookupCache.set(key, result);
+      return result;
     };
 
     const groupMap: Record<string, { sent: number; received: number }> = {};
@@ -492,38 +484,16 @@ export const getGroupStats = async (req: Request, res: Response) => {
       }
     });
     const orgDeptIdsSet = new Set(departments.map((d: any) => d.id));
-    if (departments.length > 0) {
-      departments.slice(0, 5).forEach((d: any) => {
-      });
-    }
-    
-    if (logs.length > 0) {
-      logs.slice(0, 10).forEach((log: any, idx: number) => {
-      });
-    }
-    
-    let processedCount = 0;
-    let sentCount = 0;
-    let receivedCount = 0;
-    let skippedNoReceiverDept = 0;
-    let skippedNoSender = 0;
-    let skippedSenderNotFloor = 0;
-    let skippedNoReceiver = 0;
-    let skippedNotAccepted = 0;
-    let skippedReceiverIsFloor = 0;
-    
-    type CallLogRowGroup = { fromUser: string; toUser: string; [key: string]: any };
-    logs.forEach((log: CallLogRowGroup, index: number) => {
-      const senderInfo = findUserOrDept(log.fromUser);
-      const receiverInfo = findUserOrDept(log.toUser);
+    type CallLogRowGroup = { fromUser: string; toUser: string; status: string; cnt: number; acceptedCnt: number };
+    aggregated.forEach((row: CallLogRowGroup) => {
+      const senderInfo = findUserOrDept(row.fromUser);
+      const receiverInfo = findUserOrDept(row.toUser);
       
       const senderUser = senderInfo.user;
       const receiverUser = receiverInfo.user;
       const receiverDept = receiverInfo.department;
 
       if (!receiverDept || !orgDeptIdsSet.has(receiverDept.id)) {
-        skippedNoReceiverDept++;
-        processedCount++;
         return;
       }
 
@@ -532,46 +502,22 @@ export const getGroupStats = async (req: Request, res: Response) => {
         groupMap[groupName] = { sent: 0, received: 0 };
       }
 
-      if (index < 10) {
-        if (senderUser) {
-        } else {
-        }
-        if (receiverDept) {
-        } else {
-        }
-        if (receiverUser) {
-        }
+      if (senderUser && senderUser.isFloorAccount === true) {
+        groupMap[groupName].sent += row.cnt;
       }
 
-      if (!senderUser) {
-        skippedNoSender++;
-      } else if (senderUser.isFloorAccount !== true) {
-        skippedSenderNotFloor++;
-      } else {
-        groupMap[groupName].sent += 1;
-        sentCount++;
+      if (
+        receiverUser &&
+        receiverUser.isFloorAccount !== true &&
+        receiverUser.departmentId === receiverDept.id
+      ) {
+        if (row.status === "accepted") {
+          groupMap[groupName].received += row.cnt;
+        } else if (row.acceptedCnt > 0) {
+          groupMap[groupName].received += row.acceptedCnt;
+        }
       }
-
-      if (!receiverDept) {
-        skippedNoReceiver++;
-      } else if (log.status !== "accepted" && log.acceptedAt === null) {
-        skippedNotAccepted++;
-      } else if (!receiverUser) {
-        skippedNoReceiver++;
-      } else if (receiverUser.isFloorAccount === true) {
-        skippedReceiverIsFloor++;
-      } else if (receiverUser.departmentId !== receiverDept.id) {
-        skippedNoReceiver++;
-      } else {
-        groupMap[groupName].received += 1;
-        receivedCount++;
-      }
-      processedCount++;
     });
-    
-   
-    if (Object.keys(groupMap).length > 0) {
-    }
 
     const groupStats = Object.entries(groupMap)
       .map(([label, counts]) => ({
@@ -580,9 +526,6 @@ export const getGroupStats = async (req: Request, res: Response) => {
         received: counts.received,
       }))
       .sort((a, b) => a.label.localeCompare(b.label));
-
-    groupStats.forEach((group: any) => {
-    });
 
     return res.json(groupStats);
   } catch (err: any) {

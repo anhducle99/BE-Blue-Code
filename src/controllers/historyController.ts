@@ -46,15 +46,20 @@ export const getCallHistory = async (req: Request, res: Response) => {
       endDate: endDate as string | undefined,
     };
 
-    let logs;
+    const hasPagination = req.query.limit !== undefined || req.query.offset !== undefined;
+    const limit = hasPagination ? Math.min(2000, Math.max(1, parseInt(String(req.query.limit), 10) || 500)) : undefined;
+    const offset = hasPagination ? Math.max(0, parseInt(String(req.query.offset), 10) || 0) : undefined;
+    const pagination = limit != null && offset != null ? { limit, offset } : undefined;
+
+    let result: { logs: any[]; total: number };
     if (userRole === "SuperAdmin") {
       const hasOrgFilter = queryOrgId !== undefined && queryOrgId !== null && String(queryOrgId).trim() !== "";
       const parsed = hasOrgFilter ? parseInt(String(queryOrgId), 10) : NaN;
       const orgId = !isNaN(parsed) ? parsed : undefined;
       if (orgId !== undefined) {
-        logs = await CallLogModel.findByOrganization(orgId, filters);
+        result = await CallLogModel.findByOrganization(orgId, filters, pagination);
       } else {
-        logs = await CallLogModel.findByFilters(filters);
+        result = await CallLogModel.findByFilters(filters, pagination);
       }
     } else {
       if (!user.organization_id) {
@@ -63,13 +68,14 @@ export const getCallHistory = async (req: Request, res: Response) => {
           message: "User không thuộc organization nào"
         });
       }
-      logs = await CallLogModel.findByOrganization(
+      result = await CallLogModel.findByOrganization(
         user.organization_id,
-        filters
+        filters,
+        pagination
       );
     }
 
-    const result = logs.map((log) => ({
+    const resultMapped = result.logs.map((log) => ({
       id: log.id,
       call_id: log.call_id,
       sender: log.from_user,
@@ -82,7 +88,7 @@ export const getCallHistory = async (req: Request, res: Response) => {
       image_url: log.image_url,
     }));
 
-    return res.json(result);
+    return res.json({ data: resultMapped, total: result.total });
   } catch (error: any) {
     return res.status(500).json({
       success: false,

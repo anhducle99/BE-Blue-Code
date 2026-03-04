@@ -28,6 +28,23 @@ export const getUsers = async (req: Request, res: Response) => {
   }
 };
 
+/** Current authenticated user (for refresh without loading all users). */
+export const getMe = async (req: Request, res: Response) => {
+  try {
+    const userId = (req as any).user?.id;
+    if (!userId) {
+      return res.status(401).json({ success: false, message: "Không tìm thấy thông tin người dùng" });
+    }
+    const user = await UserModel.findById(userId);
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+    res.json({ success: true, data: user });
+  } catch (err) {
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+
 export const getUser = async (req: Request, res: Response) => {
   const id = parseInt(req.params.id);
   if (isNaN(id))
@@ -273,5 +290,61 @@ export const deleteUser = async (req: Request, res: Response) => {
     res.json({ success: true, message: "User deleted" });
   } catch (err) {
     res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+
+export const unlinkUserZalo = async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id);
+  if (isNaN(id))
+    return res.status(400).json({ success: false, message: "ID không hợp lệ" });
+
+  try {
+    const currentUserId = (req as any).user?.id;
+    const currentUserRole = (req as any).user?.role;
+    if (currentUserRole !== "Admin" && currentUserRole !== "SuperAdmin") {
+      return res.status(403).json({
+        success: false,
+        message: "Chỉ Admin hoặc SuperAdmin mới có quyền gỡ liên kết Zalo",
+      });
+    }
+    const existingUser = await UserModel.findById(id);
+
+    if (!existingUser) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    if (currentUserId && currentUserRole !== "SuperAdmin") {
+      const currentUser = await UserModel.findById(currentUserId);
+
+      if (
+        currentUser?.organization_id &&
+        existingUser.organization_id &&
+        existingUser.organization_id !== currentUser.organization_id
+      ) {
+        return res.status(403).json({
+          success: false,
+          message: "Không có quyền cập nhật user này",
+        });
+      }
+    }
+
+    if (!existingUser.zalo_user_id && !existingUser.zalo_display_name) {
+      return res.status(400).json({
+        success: false,
+        message: "Tài khoản chưa liên kết Zalo",
+      });
+    }
+
+    const updatedUser = await UserModel.unlinkZalo(id);
+    return res.json({
+      success: true,
+      message: "Gỡ liên kết Zalo thành công",
+      data: updatedUser,
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, message: "Server error" });
   }
 };
