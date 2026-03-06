@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { Prisma } from "@prisma/client";
 import { prisma } from "../models/db";
 import { CallLogModel } from "../models/CallLog";
 import { getIO, emitCallLogUpdated } from "../socketStore";
@@ -70,7 +71,10 @@ const buildToUserWhere = (targets: string[]) =>
 
 const getPendingFreshAfter = () => new Date(Date.now() - MINI_PENDING_MAX_AGE_MS);
 
-const expireStalePendingMiniCalls = async (callTargets: string[]) => {
+const buildOrgFilter = (organizationId?: number | null) =>
+  typeof organizationId === "number" ? { organizationId } : { organizationId: -1 };
+
+const expireStalePendingMiniCalls = async (callTargets: string[], organizationId?: number | null) => {
   const toUserWhere = buildToUserWhere(callTargets);
   if (toUserWhere.length === 0) return 0;
 
@@ -78,6 +82,7 @@ const expireStalePendingMiniCalls = async (callTargets: string[]) => {
     status: "pending" as const,
     OR: toUserWhere,
     createdAt: { lt: getPendingFreshAfter() },
+    ...buildOrgFilter(organizationId),
   };
 
   const staleCount = await prisma.callLog.count({ where: staleWhere });
@@ -202,6 +207,18 @@ export const miniAppAuthMiddleware = async (req: any, res: any, next: any) => {
 
     if (!user) {
       return res.status(401).json({ error: "User not found" });
+    }
+
+    if (!user.isDepartmentAccount) {
+      return res.status(403).json({ error: "Mini app chi ho tro tai khoan department" });
+    }
+
+    if (user.isFloorAccount) {
+      return res.status(403).json({ error: "Tai khoan floor account khong duoc phep truy cap mini app" });
+    }
+
+    if (typeof user.organizationId !== "number") {
+      return res.status(403).json({ error: "Tai khoan chua thuoc organization nao" });
     }
 
     let departmentName: string | null = null;
@@ -540,6 +557,13 @@ router.post("/auth/qr-login/approve", async (req, res) => {
       });
     }
 
+    if (typeof user.organizationId !== "number") {
+      return res.status(403).json({
+        success: false,
+        message: "Tai khoan chua thuoc organization nao",
+      });
+    }
+
     await approveQrLoginSession(sessionId, {
       zaloUserId,
       user: {
@@ -646,6 +670,8 @@ router.post("/auth/login", async (req, res) => {
         role: true,
         organizationId: true,
         departmentId: true,
+        isDepartmentAccount: true,
+        isFloorAccount: true,
         zaloUserId: true,
         zaloDisplayName: true,
       },
@@ -660,6 +686,27 @@ router.post("/auth/login", async (req, res) => {
       });
     }
 
+    if (!user.isDepartmentAccount) {
+      return res.status(403).json({
+        success: false,
+        message: "Chi tai khoan department moi duoc dang nhap mini app",
+      });
+    }
+
+    if (user.isFloorAccount) {
+      return res.status(403).json({
+        success: false,
+        message: "Tai khoan floor account khong duoc dang nhap mini app",
+      });
+    }
+
+    if (typeof user.organizationId !== "number") {
+      return res.status(403).json({
+        success: false,
+        message: "Tai khoan chua thuoc organization nao",
+      });
+    }
+
     const profileDisplayName =
       typeof zaloUserInfo?.name === "string" ? zaloUserInfo.name.trim() : "";
     const finalDisplayName = profileDisplayName || user.zaloDisplayName || null;
@@ -669,6 +716,15 @@ router.post("/auth/login", async (req, res) => {
         data: { zaloDisplayName: finalDisplayName },
       });
       user.zaloDisplayName = finalDisplayName;
+    }
+
+    let departmentName: string | null = null;
+    if (user.departmentId) {
+      const dept = await prisma.department.findUnique({
+        where: { id: user.departmentId },
+        select: { name: true },
+      });
+      departmentName = dept?.name || null;
     }
 
     const token = jwt.sign(
@@ -693,6 +749,7 @@ router.post("/auth/login", async (req, res) => {
           role: user.role,
           organizationId: user.organizationId,
           departmentId: user.departmentId,
+          departmentName: departmentName || undefined,
           zaloDisplayName: user.zaloDisplayName,
         },
         zaloUserInfo: {
@@ -727,10 +784,10 @@ router.get("/my-calls", miniAppAuthMiddleware, async (req: any, res) => {
     const callTargets = Array.isArray(req.miniCallTargets) ? req.miniCallTargets : collectMiniCallTargets(user?.name);
     const parsedLimit = Number.parseInt(String(limit), 10);
     const safeLimit = Number.isFinite(parsedLimit) && parsedLimit > 0 ? Math.min(parsedLimit, 200) : 50;
-    const shouldExpirePending = status === "pending" || status === "all";
+    const shouldExpirePending = status === "pending" || status === "all" || status === "timeout";
 
     if (shouldExpirePending) {
-      await expireStalePendingMiniCalls(callTargets);
+      await expireStalePendingMiniCalls(callTargets, user.organizationId);
     }
 
     const pendingFilter =
@@ -743,6 +800,7 @@ router.get("/my-calls", miniAppAuthMiddleware, async (req: any, res) => {
         OR: buildToUserWhere(callTargets),
         ...(status !== "all" ? { status: status as string } : {}),
         ...pendingFilter,
+        ...buildOrgFilter(user.organizationId),
       },
       select: {
         id: true,
@@ -800,6 +858,7 @@ router.get("/calls/:callId", miniAppAuthMiddleware, async (req: any, res) => {
       where: {
         callId,
         OR: buildToUserWhere(callTargets),
+        ...buildOrgFilter(user.organizationId),
       },
     });
 
@@ -841,7 +900,7 @@ router.post("/calls/:callId/accept", miniAppAuthMiddleware, async (req: any, res
     const { callId } = req.params;
     const callTargets = Array.isArray(req.miniCallTargets) ? req.miniCallTargets : collectMiniCallTargets(user?.name);
 
-    await expireStalePendingMiniCalls(callTargets);
+    await expireStalePendingMiniCalls(callTargets, user.organizationId);
 
     const callLog = await prisma.callLog.findFirst({
       where: {
@@ -849,6 +908,7 @@ router.post("/calls/:callId/accept", miniAppAuthMiddleware, async (req: any, res
         OR: buildToUserWhere(callTargets),
         status: "pending",
         createdAt: { gte: getPendingFreshAfter() },
+        ...buildOrgFilter(user.organizationId),
       },
     });
 
@@ -859,9 +919,87 @@ router.post("/calls/:callId/accept", miniAppAuthMiddleware, async (req: any, res
       });
     }
 
-    const updated = await CallLogModel.updateStatus(callId, callLog.toUser, "accepted");
+    const ACCEPT_MAX_RETRIES = 3;
+    let acceptedLog: any = null;
+    let cancelledToUsers: string[] = [];
 
-    if (!updated) {
+    for (let attempt = 0; attempt < ACCEPT_MAX_RETRIES; attempt++) {
+      try {
+        const txResult = await prisma.$transaction(async (tx) => {
+          const alreadyAccepted = await tx.callLog.findFirst({
+            where: {
+              callId,
+              status: "accepted",
+              ...buildOrgFilter(user.organizationId),
+            },
+          });
+          if (alreadyAccepted) return null;
+
+          const accepted = await tx.callLog.updateMany({
+            where: {
+              callId,
+              toUser: callLog.toUser,
+              status: "pending",
+              ...buildOrgFilter(user.organizationId),
+            },
+            data: { status: "accepted", acceptedAt: new Date() },
+          });
+          if (accepted.count === 0) return null;
+
+          const otherPending = await tx.callLog.findMany({
+            where: {
+              callId,
+              status: "pending",
+              toUser: { not: callLog.toUser },
+              ...buildOrgFilter(user.organizationId),
+            },
+            select: { toUser: true },
+          });
+
+          if (otherPending.length > 0) {
+            await tx.callLog.updateMany({
+              where: {
+                callId,
+                status: "pending",
+                ...buildOrgFilter(user.organizationId),
+              },
+              data: { status: "cancelled", rejectedAt: new Date() },
+            });
+          }
+
+          const freshLog = await tx.callLog.findFirst({
+            where: {
+              callId,
+              toUser: callLog.toUser,
+              ...buildOrgFilter(user.organizationId),
+            },
+          });
+
+          return {
+            accepted: freshLog,
+            cancelledToUsers: otherPending.map((l) => l.toUser),
+          };
+        }, {
+          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        });
+
+        if (!txResult) {
+          return res.status(400).json({
+            success: false,
+            message: "Không thể cập nhật trạng thái. Có thể cuộc gọi đã được xử lý.",
+          });
+        }
+
+        acceptedLog = txResult.accepted;
+        cancelledToUsers = txResult.cancelledToUsers;
+        break;
+      } catch (e: any) {
+        if (e.code === "P2034" && attempt < ACCEPT_MAX_RETRIES - 1) continue;
+        throw e;
+      }
+    }
+
+    if (!acceptedLog) {
       return res.status(400).json({
         success: false,
         message: "Không thể cập nhật trạng thái. Có thể cuộc gọi đã được xử lý.",
@@ -870,7 +1008,9 @@ router.post("/calls/:callId/accept", miniAppAuthMiddleware, async (req: any, res
 
     const io = getIO();
     if (io && user.organizationId) {
-      io.to(`organization_${user.organizationId}`).emit("callStatusUpdate", {
+      const room = `organization_${user.organizationId}`;
+
+      io.to(room).emit("callStatusUpdate", {
         callId,
         toDept: callLog.toUser,
         toUser: callLog.toUser,
@@ -879,22 +1019,29 @@ router.post("/calls/:callId/accept", miniAppAuthMiddleware, async (req: any, res
 
       emitCallLogUpdated(
         {
-          id: updated.id,
-          call_id: updated.call_id,
-          from_user: updated.from_user,
-          to_user: updated.to_user,
-          message: updated.message,
-          image_url: updated.image_url,
-          status: updated.status,
-          created_at: updated.created_at,
-          accepted_at: updated.accepted_at,
-          rejected_at: updated.rejected_at,
+          id: acceptedLog.id,
+          call_id: acceptedLog.callId,
+          from_user: acceptedLog.fromUser,
+          to_user: acceptedLog.toUser,
+          message: acceptedLog.message,
+          image_url: acceptedLog.imageUrl,
+          status: acceptedLog.status,
+          created_at: acceptedLog.createdAt,
+          accepted_at: acceptedLog.acceptedAt,
+          rejected_at: acceptedLog.rejectedAt,
         },
         user.organizationId
       );
-    }
 
-    await cancelOtherPendingCalls(callId, callLog.toUser, user.organizationId);
+      cancelledToUsers.forEach((toUser) => {
+        io.to(room).emit("callStatusUpdate", {
+          callId,
+          toDept: toUser,
+          toUser,
+          status: "cancelled",
+        });
+      });
+    }
 
     res.json({
       success: true,
@@ -902,7 +1049,7 @@ router.post("/calls/:callId/accept", miniAppAuthMiddleware, async (req: any, res
       data: {
         callId,
         status: "accepted",
-        acceptedAt: updated.accepted_at,
+        acceptedAt: acceptedLog.acceptedAt,
       },
     });
   } catch (error: any) {
@@ -922,7 +1069,7 @@ router.post("/calls/:callId/reject", miniAppAuthMiddleware, async (req: any, res
     const { callId } = req.params;
     const callTargets = Array.isArray(req.miniCallTargets) ? req.miniCallTargets : collectMiniCallTargets(user?.name);
 
-    await expireStalePendingMiniCalls(callTargets);
+    await expireStalePendingMiniCalls(callTargets, user.organizationId);
 
     const callLog = await prisma.callLog.findFirst({
       where: {
@@ -930,6 +1077,7 @@ router.post("/calls/:callId/reject", miniAppAuthMiddleware, async (req: any, res
         OR: buildToUserWhere(callTargets),
         status: "pending",
         createdAt: { gte: getPendingFreshAfter() },
+        ...buildOrgFilter(user.organizationId),
       },
     });
 
@@ -940,7 +1088,13 @@ router.post("/calls/:callId/reject", miniAppAuthMiddleware, async (req: any, res
       });
     }
 
-    const updated = await CallLogModel.updateStatus(callId, callLog.toUser, "rejected");
+    const updated = await CallLogModel.updateStatus(
+      callId,
+      callLog.toUser,
+      "rejected",
+      undefined,
+      user.organizationId
+    );
 
     if (!updated) {
       return res.status(400).json({
@@ -994,51 +1148,5 @@ router.post("/calls/:callId/reject", miniAppAuthMiddleware, async (req: any, res
   }
 });
 
-
-async function cancelOtherPendingCalls(
-  callId: string,
-  acceptedBy: string,
-  organizationId?: number | null
-) {
-  try {
-    const pendingLogs = await prisma.callLog.findMany({
-      where: {
-        callId,
-        status: "pending",
-        toUser: { not: acceptedBy },
-      },
-    });
-
-    if (pendingLogs.length === 0) {
-      return;
-    }
-
-    await prisma.callLog.updateMany({
-      where: {
-        callId,
-        status: "pending",
-        toUser: { in: pendingLogs.map((log) => log.toUser) },
-      },
-      data: {
-        status: "cancelled",
-        rejectedAt: new Date(),
-      },
-    });
-
-    const io = getIO();
-    if (io && organizationId) {
-      pendingLogs.forEach((log: any) => {
-        io.to(`organization_${organizationId}`).emit("callStatusUpdate", {
-          callId,
-          toDept: log.toUser,
-          toUser: log.toUser,
-          status: "cancelled",
-        });
-      });
-    }
-  } catch (error) {
-    console.error("[MiniApp] Cancel other pending error:", error);
-  }
-}
 
 export default router;

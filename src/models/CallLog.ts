@@ -9,6 +9,7 @@ export interface ICallLog {
   message?: string;
   image_url?: string;
   status?: "pending" | "accepted" | "rejected" | "timeout" | "cancelled" | "unreachable";
+  organization_id?: number | null;
   created_at?: Date;
   accepted_at?: Date;
   rejected_at?: Date;
@@ -23,6 +24,7 @@ export class CallLogModel {
       message,
       image_url,
       status = "pending",
+      organization_id,
     } = callLog;
 
     const created = await prisma.callLog.create({
@@ -33,7 +35,8 @@ export class CallLogModel {
         message,
         imageUrl: image_url,
         status,
-      },
+        organizationId: organization_id ?? null,
+      } as any,
     });
 
     return {
@@ -44,6 +47,7 @@ export class CallLogModel {
       message: created.message || undefined,
       image_url: created.imageUrl || undefined,
       status: created.status as ICallLog["status"],
+      organization_id: (created as any).organizationId ?? undefined,
       created_at: created.createdAt,
       accepted_at: created.acceptedAt || undefined,
       rejected_at: created.rejectedAt || undefined,
@@ -284,7 +288,8 @@ export class CallLogModel {
     callId: string,
     toUser: string,
     status: ICallLog["status"],
-    timestamp?: Date
+    timestamp?: Date,
+    organizationId?: number | null
   ): Promise<ICallLog | null> {
     const updateData: any = { status };
 
@@ -298,7 +303,8 @@ export class CallLogModel {
       where: {
         callId,
         toUser,
-        ...(status === "unreachable" ? { status: "pending" } : {}),
+        status: "pending",
+        ...(typeof organizationId === "number" ? { organizationId } : {}),
       },
       data: updateData,
     });
@@ -306,7 +312,11 @@ export class CallLogModel {
     if (updated.count === 0) return null;
 
     const log = await prisma.callLog.findFirst({
-      where: { callId, toUser },
+      where: {
+        callId,
+        toUser,
+        ...(typeof organizationId === "number" ? { organizationId } : {}),
+      },
     });
 
     if (!log) return null;

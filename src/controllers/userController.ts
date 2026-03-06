@@ -8,15 +8,19 @@ export const getUsers = async (req: Request, res: Response) => {
     const userRole = (req as any).user?.role;
     let organizationId: number | undefined = undefined;
 
-    if (userRole !== "SuperAdmin" && userId) {
-      const user = await UserModel.findById(userId);
-      if (user?.organization_id) {
-        organizationId = user.organization_id;
+    if (userRole !== "SuperAdmin") {
+      if (!userId) {
+        return res.status(401).json({ success: false, message: "Không tìm thấy thông tin người dùng" });
       }
+      const user = await UserModel.findById(userId);
+      if (!user?.organization_id) {
+        return res.status(403).json({ success: false, message: "User không thuộc organization nào" });
+      }
+      organizationId = user.organization_id;
     }
 
     const queryOrgId = req.query.organization_id;
-    if (queryOrgId) {
+    if (queryOrgId && userRole === "SuperAdmin") {
       const parsed = parseInt(queryOrgId as string);
       if (!isNaN(parsed)) organizationId = parsed;
     }

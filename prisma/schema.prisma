@@ -83,16 +83,17 @@ model History {
 }
 
 model CallLog {
-  id         Int       @id @default(autoincrement())
-  callId     String    @map("call_id")
-  fromUser   String    @map("from_user")
-  toUser     String    @map("to_user")
-  message    String?
-  imageUrl   String?   @map("image_url")
-  status     String    @default("pending") // "pending" | "accepted" | "rejected" | "timeout" | "cancelled" | "unreachable"
-  createdAt  DateTime  @default(now()) @map("created_at")
-  acceptedAt DateTime? @map("accepted_at")
-  rejectedAt DateTime? @map("rejected_at")
+  id             Int       @id @default(autoincrement())
+  callId         String    @map("call_id")
+  fromUser       String    @map("from_user")
+  toUser         String    @map("to_user")
+  message        String?
+  imageUrl       String?   @map("image_url")
+  status         String    @default("pending") // "pending" | "accepted" | "rejected" | "timeout" | "cancelled" | "unreachable"
+  organizationId Int?      @map("organization_id")
+  createdAt      DateTime  @default(now()) @map("created_at")
+  acceptedAt     DateTime? @map("accepted_at")
+  rejectedAt     DateTime? @map("rejected_at")
 
   incidentCaseCallLogs IncidentCaseCallLog[]
 
@@ -101,6 +102,7 @@ model CallLog {
   @@index([toUser])
   @@index([toUser, createdAt])
   @@index([toUser, status, createdAt])
+  @@index([organizationId])
   @@index([createdAt])
   @@map("call_logs")
 }

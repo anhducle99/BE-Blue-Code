@@ -7,6 +7,7 @@ import compression from "compression";
 import http from "http";
 import { networkInterfaces } from "os";
 import { CallLogModel } from "./models/CallLog";
+import { prisma } from "./models/db";
 
 type CallLogRow = {
   id: number;
@@ -21,8 +22,11 @@ type CallLogRow = {
   rejectedAt: Date | null;
 };
 import { Server as SocketServer } from "socket.io";
+import jwt from "jsonwebtoken";
 import { onlineUsers, setIO, callTimers, normalizeName, findSocketByDepartmentName, emitCallLogUpdated } from "./socketStore";
 import { getOrganizationIdForCall } from "./services/orgCache";
+
+const SOCKET_JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
 import callRoutes from "./routes/callRoutes";
 import authRoutes from "./routes/authRoutes";
 import departmentRoutes from "./routes/departmentRoutes";
@@ -205,59 +209,77 @@ const io = new SocketServer(server, {
 setIO(io);
 
 io.on("connection", (socket) => {
+  type RegisteredSocketUser = {
+    id: number;
+    name: string;
+    departmentName: string;
+    organizationId: number | null;
+    role: string;
+  };
+
+  const getRegisteredSocketUser = (): RegisteredSocketUser | null => {
+    const value = (socket.data as { registeredUser?: RegisteredSocketUser }).registeredUser;
+    return value && typeof value.id === "number" ? value : null;
+  };
+
+  const buildRecipientWhere = (user: RegisteredSocketUser) => {
+    const targets = Array.from(
+      new Set(
+        [user.name, user.departmentName]
+          .map((value) => String(value || "").trim())
+          .filter(Boolean)
+      )
+    );
+
+    return targets.map((target) => ({
+      toUser: {
+        equals: target,
+        mode: "insensitive" as const,
+      },
+    }));
+  };
+
+  const canActAsSender = (user: RegisteredSocketUser, sender?: string | null) => {
+    const normalizedSender = normalizeName(String(sender || ""));
+    if (!normalizedSender) return false;
+    return [user.name, user.departmentName]
+      .map((value) => normalizeName(value))
+      .some((value) => value === normalizedSender);
+  };
+
   socket.on("register", async (data) => {
+    const token = data?.token || socket.handshake.auth?.token;
+    if (!token || typeof token !== "string") return;
+
+    let verifiedUserId: number | null = null;
+    try {
+      const decoded = jwt.verify(token.trim(), SOCKET_JWT_SECRET) as any;
+      verifiedUserId =
+        typeof decoded.userId === "number" ? decoded.userId
+        : typeof decoded.id === "number" ? decoded.id
+        : null;
+    } catch {
+      return;
+    }
+
+    if (!verifiedUserId) return;
+
     const { UserModel } = await import("./models/User");
-    const payloadId = Number(data?.id);
-    const payloadName = String(data?.name || "").trim();
-    const payloadEmail = String(data?.email || "").trim();
+    const user = await UserModel.findById(verifiedUserId);
+    if (!user) return;
 
-    let user = Number.isInteger(payloadId) && payloadId > 0
-      ? await UserModel.findById(payloadId)
-      : null;
+    const safeName = (user.name || "").toString().trim();
+    const safeDeptName = (user.department_name || safeName).toString().trim();
+    const safeDeptId = String(user.department_id ?? "");
+    const safeUserId = Number(user.id);
 
-    if (!user && payloadEmail) {
-      user = await UserModel.findByEmail(payloadEmail);
-    }
-
-    if (!user && payloadName) {
-      user = await UserModel.findByName(payloadName) ?? null;
-      if (!user && payloadName.length >= 2) {
-        const { prisma } = await import("./models/db");
-        const normalizedPayload = normalizeName(payloadName);
-        const prefix = payloadName.slice(0, 50);
-        const candidates = await prisma.user.findMany({
-          where: {
-            OR: [
-              { name: { startsWith: prefix, mode: "insensitive" } },
-              { email: { startsWith: prefix, mode: "insensitive" } },
-            ],
-          },
-          select: { id: true, name: true, email: true },
-          take: 30,
-        });
-        const matched = candidates.find(
-          (u) =>
-            normalizeName(String(u.name || "")) === normalizedPayload ||
-            normalizeName(String(u.email || "")) === normalizedPayload
-        );
-        if (matched?.id) {
-          user = await UserModel.findById(matched.id);
-        }
-      }
-    }
-
-    const safeName = (user?.name || data?.name || "").toString().trim();
-    const safeDeptName = (user?.department_name || data?.department_name || safeName).toString().trim();
-    const safeDeptId = String(user?.department_id ?? data?.department_id ?? "");
-
-    if (!safeName) return;
+    if (!safeName || !Number.isInteger(safeUserId) || safeUserId <= 0) return;
     const key = `${safeName}_${safeDeptName || safeName}`;
 
-    if (user && user.role === "SuperAdmin") {
-      const { prisma } = await import("./models/db");
+    if (user.role === "SuperAdmin") {
       const orgs = await prisma.organization.findMany({ select: { id: true } });
       orgs.forEach((o: { id: number }) => socket.join(`organization_${o.id}`));
-    } else if (user && user.organization_id) {
+    } else if (user.organization_id) {
       const roomName = `organization_${user.organization_id}`;
       socket.join(roomName);
     }
@@ -268,20 +290,53 @@ io.on("connection", (socket) => {
       department_id: safeDeptId,
       department_name: safeDeptName,
     });
+
+    (socket.data as { registeredUser?: RegisteredSocketUser }).registeredUser = {
+      id: safeUserId,
+      name: safeName,
+      departmentName: safeDeptName,
+      organizationId: user.organization_id ?? null,
+      role: String(user.role || ""),
+    };
   });
 
-  socket.on("callAccepted", async ({ callId, toDept }) => {
+  socket.on("callAccepted", async ({ callId }) => {
     try {
-      const timer = callTimers.get(callId);
-      if (timer) {
-        clearTimeout(timer);
-        callTimers.delete(callId);
-      }
+      const registeredUser = getRegisteredSocketUser();
+      const safeCallId = String(callId || "").trim();
+      if (!registeredUser?.organizationId || !safeCallId) return;
 
- 
-      const updatedLog = await CallLogModel.updateStatus(callId, toDept, "accepted");
+      const recipientWhere = buildRecipientWhere(registeredUser);
+      if (recipientWhere.length === 0) return;
+
+      const pendingLog = await prisma.callLog.findFirst({
+        where: {
+          callId: safeCallId,
+          status: "pending",
+          organizationId: registeredUser.organizationId,
+          OR: recipientWhere,
+        } as any,
+        orderBy: { id: "asc" },
+      });
+      if (!pendingLog) return;
+
+      const updatedLog = await CallLogModel.updateStatus(
+        safeCallId,
+        pendingLog.toUser,
+        "accepted",
+        undefined,
+        registeredUser.organizationId
+      );
       if (updatedLog) {
-        const organizationId = await getOrganizationIdForCall(updatedLog.from_user, updatedLog.to_user);
+        const timer = callTimers.get(safeCallId);
+        if (timer) {
+          clearTimeout(timer);
+          callTimers.delete(safeCallId);
+        }
+
+        const organizationId =
+          registeredUser.organizationId ??
+          (await getOrganizationIdForCall(updatedLog.from_user, updatedLog.to_user));
 
         const callLogData = {
           id: updatedLog.id,
@@ -299,14 +354,14 @@ io.on("connection", (socket) => {
         if (organizationId) {
           const roomName = `organization_${organizationId}`;
           io.to(roomName).emit("callStatusUpdate", { 
-            callId, 
+            callId: safeCallId, 
             toDept: updatedLog.to_user,
             toUser: updatedLog.to_user,
             status: "accepted" 
           });
         } else {
           io.emit("callStatusUpdate", { 
-            callId, 
+            callId: safeCallId, 
             toDept: updatedLog.to_user,
             toUser: updatedLog.to_user,
             status: "accepted" 
@@ -319,17 +374,37 @@ io.on("connection", (socket) => {
     }
   });
 
-  socket.on("callRejected", async ({ callId, toDept }) => {
+  socket.on("callRejected", async ({ callId }) => {
     try {
-      const timer = callTimers.get(callId);
-      if (timer) {
-        clearTimeout(timer);
-        callTimers.delete(callId);
-      }
+      const registeredUser = getRegisteredSocketUser();
+      const safeCallId = String(callId || "").trim();
+      if (!registeredUser?.organizationId || !safeCallId) return;
 
-      const updatedLog = await CallLogModel.updateStatus(callId, toDept, "rejected");
+      const recipientWhere = buildRecipientWhere(registeredUser);
+      if (recipientWhere.length === 0) return;
+
+      const pendingLog = await prisma.callLog.findFirst({
+        where: {
+          callId: safeCallId,
+          status: "pending",
+          organizationId: registeredUser.organizationId,
+          OR: recipientWhere,
+        } as any,
+        orderBy: { id: "asc" },
+      });
+      if (!pendingLog) return;
+
+      const updatedLog = await CallLogModel.updateStatus(
+        safeCallId,
+        pendingLog.toUser,
+        "rejected",
+        undefined,
+        registeredUser.organizationId
+      );
       if (updatedLog) {
-        const organizationId = await getOrganizationIdForCall(updatedLog.from_user, updatedLog.to_user);
+        const organizationId =
+          registeredUser.organizationId ??
+          (await getOrganizationIdForCall(updatedLog.from_user, updatedLog.to_user));
 
         const callLogData = {
           id: updatedLog.id,
@@ -345,7 +420,7 @@ io.on("connection", (socket) => {
         };
 
         const payload = {
-          callId,
+          callId: safeCallId,
           toDept: updatedLog.to_user,
           toUser: updatedLog.to_user,
           status: "rejected" as const,
@@ -370,28 +445,64 @@ io.on("connection", (socket) => {
     }
   });
 
-  socket.on("callTimeout", async ({ callId, toDept }) => {
+  socket.on("callTimeout", async ({ callId }) => {
     try {
-      const { prisma } = await import("./models/db");
+      const registeredUser = getRegisteredSocketUser();
+      const safeCallId = String(callId || "").trim();
+      if (!registeredUser?.organizationId || !safeCallId) return;
+
+      const recipientWhere = buildRecipientWhere(registeredUser);
+      if (recipientWhere.length === 0) return;
+
+      const pendingLogs = await prisma.callLog.findMany({
+        where: {
+          callId: safeCallId,
+          status: "pending",
+          organizationId: registeredUser.organizationId,
+          OR: recipientWhere,
+        } as any,
+        select: { id: true },
+      });
+      if (pendingLogs.length === 0) return;
+
       const updated = await prisma.callLog.updateMany({
-        where: { callId, status: "pending" },
+        where: {
+          id: { in: pendingLogs.map((log) => log.id) },
+          status: "pending",
+        },
         data: { status: "timeout", rejectedAt: new Date() },
       });
       if (updated.count === 0) {
         return;
       }
+
       const updatedLogs = await prisma.callLog.findMany({
-        where: { callId, status: "timeout" },
+        where: {
+          id: { in: pendingLogs.map((log) => log.id) },
+          status: "timeout",
+        },
       });
       const updatedLog = updatedLogs.length > 0 ? updatedLogs[0] : null;
       if (updatedLog) {
-        const timer = callTimers.get(callId);
-        if (timer) {
-          clearTimeout(timer);
-          callTimers.delete(callId);
+      const pendingRemain = await prisma.callLog.count({
+          where: {
+            callId: safeCallId,
+            status: "pending",
+            organizationId: registeredUser.organizationId,
+          } as any,
+        });
+
+        if (pendingRemain === 0) {
+          const timer = callTimers.get(safeCallId);
+          if (timer) {
+            clearTimeout(timer);
+            callTimers.delete(safeCallId);
+          }
         }
 
-        const organizationId = await getOrganizationIdForCall(updatedLog.fromUser, updatedLog.toUser);
+        const organizationId =
+          registeredUser.organizationId ??
+          (await getOrganizationIdForCall(updatedLog.fromUser, updatedLog.toUser));
 
         updatedLogs.forEach((log: CallLogRow) => {
           const callLogData = {
@@ -408,14 +519,14 @@ io.on("connection", (socket) => {
           };
           if (organizationId) {
             io.to(`organization_${organizationId}`).emit("callStatusUpdate", {
-              callId,
+              callId: safeCallId,
               toDept: log.toUser,
               toUser: log.toUser,
               status: "timeout",
             });
           } else {
             io.emit("callStatusUpdate", {
-              callId,
+              callId: safeCallId,
               toDept: log.toUser,
               toUser: log.toUser,
               status: "timeout",
@@ -428,11 +539,14 @@ io.on("connection", (socket) => {
     }
   });
 
-  socket.on("cancelCall", async ({ callId, from, targets }) => {
+  socket.on("cancelCall", async ({ callId }) => {
     try {
-      const { prisma } = await import("./models/db");
+      const registeredUser = getRegisteredSocketUser();
+      const safeCallId = String(callId || "").trim();
+      if (!registeredUser?.organizationId || !safeCallId) return;
+
       const callLogs = await prisma.callLog.findMany({
-        where: { callId },
+        where: { callId: safeCallId, organizationId: registeredUser.organizationId } as any,
       });
 
       if (callLogs.length === 0) {
@@ -442,10 +556,7 @@ io.on("connection", (socket) => {
 
       const firstCallLog = callLogs[0];
 
-      const normalizedFrom = normalizeName(from);
-      const normalizedSender = normalizeName(firstCallLog.fromUser);
-      
-      if (normalizedFrom !== normalizedSender && firstCallLog.fromUser !== from) {
+      if (!canActAsSender(registeredUser, firstCallLog.fromUser)) {
         socket.emit("error", { message: "Unauthorized: Only sender can cancel call" });
         return;
       }
@@ -456,17 +567,18 @@ io.on("connection", (socket) => {
         return;
       }
 
-      const timer = callTimers.get(callId);
+      const timer = callTimers.get(safeCallId);
       if (timer) {
         clearTimeout(timer);
-        callTimers.delete(callId);
+        callTimers.delete(safeCallId);
       }
 
       const updated = await prisma.callLog.updateMany({
         where: {
-          callId,
+          callId: safeCallId,
+          organizationId: registeredUser.organizationId,
           status: "pending",
-        },
+        } as any,
         data: {
           status: "cancelled",
           rejectedAt: new Date(),
@@ -475,19 +587,18 @@ io.on("connection", (socket) => {
 
       if (updated.count > 0) {
         const updatedLogs = await prisma.callLog.findMany({
-          where: { callId },
+          where: { callId: safeCallId, organizationId: registeredUser.organizationId } as any,
         });
-        const organizationId = await getOrganizationIdForCall(firstCallLog.fromUser, firstCallLog.toUser);
-
-        const targetNames = targets && Array.isArray(targets) 
-          ? targets 
-          : updatedLogs.map((log: CallLogRow) => log.toUser);
+        const organizationId =
+          registeredUser.organizationId ??
+          (await getOrganizationIdForCall(firstCallLog.fromUser, firstCallLog.toUser));
+        const targetNames = Array.from(new Set(updatedLogs.map((log: CallLogRow) => log.toUser)));
 
         targetNames.forEach((target: string) => {
           const targetSocket = findSocketByDepartmentName(target);
           if (targetSocket) {
             targetSocket.emit("callStatusUpdate", {
-              callId,
+              callId: safeCallId,
               toDept: target,
               status: "cancelled",
             });
@@ -498,7 +609,7 @@ io.on("connection", (socket) => {
           const roomName = `organization_${organizationId}`;
           targetNames.forEach((target: string) => {
             io.to(roomName).emit("callStatusUpdate", {
-              callId,
+              callId: safeCallId,
               toDept: target,
               status: "cancelled",
             });
@@ -506,7 +617,7 @@ io.on("connection", (socket) => {
         } else {
           targetNames.forEach((target: string) => {
             io.emit("callStatusUpdate", {
-              callId,
+              callId: safeCallId,
               toDept: target,
               status: "cancelled",
             });
@@ -549,6 +660,7 @@ io.on("connection", (socket) => {
         onlineUsers.delete(key);
       }
     }
+    delete (socket.data as { registeredUser?: RegisteredSocketUser }).registeredUser;
   });
 
   socket.on("error", (error) => {

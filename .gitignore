@@ -48,6 +48,7 @@ coverage/
 
 # Backups
 *.sql
+!prisma/migrations/**/migration.sql
 *.sql.gz
 backups/
 

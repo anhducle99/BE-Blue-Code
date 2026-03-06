@@ -99,10 +99,6 @@ export const getDepartmentStats = async (req: Request, res: Response) => {
           },
           orderBy: { id: "asc" },
         });
-      } else {
-        departments = await prisma.department.findMany({
-          orderBy: { id: "asc" },
-        });
       }
     }
     
