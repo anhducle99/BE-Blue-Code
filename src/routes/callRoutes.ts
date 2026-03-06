@@ -3,7 +3,6 @@ import { CallLogModel } from "../models/CallLog";
 import { IncidentCaseModel } from "../models/IncidentCase";
 import { prisma } from "../models/db";
 import { getIO, onlineUsers, callTimers, normalizeName, emitCallLogCreated, emitCallLogUpdated } from "../socketStore";
-import { getOrganizationIdForCall } from "../services/orgCache";
 import { randomUUID } from "crypto";
 import { authMiddleware } from "../middleware/authMiddleware";
 import { validateCallPermission } from "../middleware/validateCallPermission";
@@ -150,10 +149,11 @@ router.post("/", authMiddleware, validateCallPermission, async (req, res) => {
         message: e.payload.message ?? null,
         imageUrl: e.payload.image_url ?? null,
         status: (e.payload.status || "pending") as "pending",
+        organizationId: organizationId ?? null,
       }));
       await (tx as any).callLog.createMany({ data });
       const created = await (tx as any).callLog.findMany({
-        where: { callId },
+        where: { callId, organizationId },
         orderBy: { id: "asc" },
       });
       return created.map((c: any) => ({
@@ -212,15 +212,17 @@ router.post("/", authMiddleware, validateCallPermission, async (req, res) => {
 
     const timeoutTimer = setTimeout(async () => {
       try {
-        const accepted = await prisma.callLog.findFirst({ where: { callId, status: "accepted" } });
+        const accepted = await prisma.callLog.findFirst({
+          where: { callId, status: "accepted", organizationId },
+        });
         if (accepted) return;
         const updated = await prisma.callLog.updateMany({
-          where: { callId, status: "pending" },
+          where: { callId, status: "pending", organizationId },
           data: { status: "timeout", rejectedAt: new Date() },
         });
         if (updated.count === 0) return;
         const pending = await prisma.callLog.findMany({
-          where: { callId, status: "timeout" },
+          where: { callId, status: "timeout", organizationId },
         });
         const ioRef = getIO();
         if (ioRef && organizationId) {
@@ -301,10 +303,17 @@ router.post("/:callId/cancel", authMiddleware, async (req, res) => {
       });
     }
 
+    if (!user.organization_id) {
+      return res.status(403).json({
+        success: false,
+        message: "User không thuộc organization nào"
+      });
+    }
+
     const fromDept = user.department_name || user.name;
-    const { prisma } = await import("../models/db");
+    const organizationId = user.organization_id;
     const callLog = await prisma.callLog.findFirst({
-      where: { callId },
+      where: { callId, organizationId },
     });
 
     if (!callLog) {
@@ -340,6 +349,7 @@ router.post("/:callId/cancel", authMiddleware, async (req, res) => {
     const updated = await prisma.callLog.updateMany({
       where: {
         callId,
+        organizationId,
         status: "pending",
       },
       data: {
@@ -356,16 +366,11 @@ router.post("/:callId/cancel", authMiddleware, async (req, res) => {
     }
 
     const updatedLogs = await prisma.callLog.findMany({
-      where: { callId },
+      where: { callId, organizationId },
     });
 
     const io = getIO();
     if (io) {
-      const organizationId = await getOrganizationIdForCall(
-        callLog.fromUser,
-        callLog.toUser
-      );
-
       const emittedLogIds = new Set<number>();
       
       type CallLogRow = { id: number; callId: string; fromUser: string; toUser: string; message?: string | null; imageUrl?: string | null; status: string; createdAt: Date; acceptedAt?: Date | null; rejectedAt?: Date | null };
