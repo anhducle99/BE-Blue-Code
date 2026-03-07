@@ -108,7 +108,8 @@ export class CallLogModel {
          )
     )`;
 
-    let where = Prisma.sql`(lower(trim(from_user)) IN ${identSub} OR lower(trim(to_user)) IN ${identSub})`;
+    const legacyScope = Prisma.sql`(lower(trim(from_user)) IN ${identSub} OR lower(trim(to_user)) IN ${identSub})`;
+    let where = Prisma.sql`(organization_id = ${organizationId} OR (organization_id IS NULL AND ${legacyScope}))`;
 
     if (filters?.sender) {
       const p = `%${escapeLike(filters.sender)}%`;

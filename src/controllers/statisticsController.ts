@@ -134,10 +134,16 @@ export const getDepartmentStats = async (req: Request, res: Response) => {
         WHERE created_at >= ${new Date(start)}::timestamptz
           AND created_at <= ${new Date(end)}::timestamptz
           AND (
-            lower(trim(from_user)) IN (SELECT lower(trim(name)) FROM users WHERE organization_id = ${organizationId})
-            OR lower(trim(to_user)) IN (SELECT lower(trim(name)) FROM users WHERE organization_id = ${organizationId})
-            OR lower(trim(from_user)) IN (SELECT lower(trim(name)) FROM departments WHERE organization_id = ${organizationId})
-            OR lower(trim(to_user)) IN (SELECT lower(trim(name)) FROM departments WHERE organization_id = ${organizationId})
+            organization_id = ${organizationId}
+            OR (
+              organization_id IS NULL
+              AND (
+                lower(trim(from_user)) IN (SELECT lower(trim(name)) FROM users WHERE organization_id = ${organizationId})
+                OR lower(trim(to_user)) IN (SELECT lower(trim(name)) FROM users WHERE organization_id = ${organizationId})
+                OR lower(trim(from_user)) IN (SELECT lower(trim(name)) FROM departments WHERE organization_id = ${organizationId})
+                OR lower(trim(to_user)) IN (SELECT lower(trim(name)) FROM departments WHERE organization_id = ${organizationId})
+              )
+            )
           )
         GROUP BY from_user, to_user, status
       `;
@@ -385,10 +391,16 @@ export const getGroupStats = async (req: Request, res: Response) => {
         WHERE created_at >= ${new Date(start)}::timestamptz
           AND created_at <= ${new Date(end)}::timestamptz
           AND (
-            lower(trim(from_user)) IN (SELECT lower(trim(name)) FROM users WHERE organization_id = ${organizationId})
-            OR lower(trim(to_user)) IN (SELECT lower(trim(name)) FROM users WHERE organization_id = ${organizationId})
-            OR lower(trim(from_user)) IN (SELECT lower(trim(name)) FROM departments WHERE organization_id = ${organizationId})
-            OR lower(trim(to_user)) IN (SELECT lower(trim(name)) FROM departments WHERE organization_id = ${organizationId})
+            organization_id = ${organizationId}
+            OR (
+              organization_id IS NULL
+              AND (
+                lower(trim(from_user)) IN (SELECT lower(trim(name)) FROM users WHERE organization_id = ${organizationId})
+                OR lower(trim(to_user)) IN (SELECT lower(trim(name)) FROM users WHERE organization_id = ${organizationId})
+                OR lower(trim(from_user)) IN (SELECT lower(trim(name)) FROM departments WHERE organization_id = ${organizationId})
+                OR lower(trim(to_user)) IN (SELECT lower(trim(name)) FROM departments WHERE organization_id = ${organizationId})
+              )
+            )
           )
         GROUP BY from_user, to_user, status
       `;

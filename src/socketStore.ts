@@ -5,6 +5,7 @@ export interface OnlineUser {
   name: string;
   department_id: string;
   department_name: string;
+  organization_id?: number | null;
 }
 
 export const onlineUsers = new Map<string, OnlineUser>();
@@ -31,14 +32,37 @@ export const normalizeName = (name: string): string => {
     .trim();
 };
 
-export const findSocketByDepartmentName = (name: string): Socket | null => {
+export const buildOnlineUserKey = (
+  name: string,
+  departmentName: string,
+  organizationId?: number | null
+): string => {
+  const safeName = normalizeName(name);
+  const safeDepartmentName = normalizeName(departmentName || name);
+  const safeOrganizationId =
+    typeof organizationId === "number" && organizationId > 0 ? organizationId : "none";
+  return `${safeOrganizationId}:${safeName}:${safeDepartmentName}`;
+};
+
+export const findSocketByDepartmentName = (
+  name: string,
+  organizationId?: number | null
+): Socket | null => {
   if (!io) return null;
   
   const normalizedName = normalizeName(name);
   
   for (const [key, user] of onlineUsers.entries()) {
+    if (
+      typeof organizationId === "number" &&
+      organizationId > 0 &&
+      user.organization_id !== organizationId
+    ) {
+      continue;
+    }
     const normalizedUserDept = normalizeName(user.department_name || user.name);
-    if (normalizedUserDept === normalizedName) {
+    const normalizedUserName = normalizeName(user.name);
+    if (normalizedUserDept === normalizedName || normalizedUserName === normalizedName) {
       const socket = io.sockets.sockets.get(user.socketId);
       if (socket) {
         return socket;

@@ -185,12 +185,6 @@ export class DepartmentModel {
 
   static async delete(id: number): Promise<boolean> {
     try {
-      await prisma.history.deleteMany({
-        where: {
-          OR: [{ departmentFromId: id }, { departmentToId: id }],
-        },
-      });
-
       await prisma.department.delete({
         where: { id },
       });
