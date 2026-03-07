@@ -73,7 +73,7 @@ const buildQrLoginLaunchUrl = (
 
   const safeBase = MINI_APP_WEB_URL.replace(/\/+$/, "");
   return {
-    launchUrl: `${safeBase}/?${query.toString()}#/login`,
+    launchUrl: `${safeBase}/login?${query.toString()}`,
     mode: "web",
   };
 };
@@ -202,8 +202,15 @@ export const login = async (req: Request, res: Response) => {
 export const createQrLoginSessionController = async (_req: Request, res: Response) => {
   try {
     assertMiniAppLaunchConfig();
+    const userId = Number(((_req as any).user?.id ?? 0));
+    if (!Number.isInteger(userId) || userId <= 0) {
+      return res.status(401).json({
+        success: false,
+        message: "Missing user id",
+      });
+    }
     const ttlSeconds = 180;
-    const { session, pollToken } = await createQrLoginSession(ttlSeconds * 1000);
+    const { session, pollToken } = await createQrLoginSession(ttlSeconds * 1000, userId);
     const launch = buildQrLoginLaunchUrl(session.sessionId);
     const qrUrl = qrCodeLib
       ? await qrCodeLib.toDataURL(launch.launchUrl, {
@@ -219,6 +226,7 @@ export const createQrLoginSessionController = async (_req: Request, res: Respons
       data: {
         sessionId: session.sessionId,
         pollToken,
+        expectedUserId: session.expectedUserId,
         expiresInSeconds: ttlSeconds,
         expiresAt: new Date(session.expiresAt).toISOString(),
         launchUrl: launch.launchUrl,

@@ -23,6 +23,7 @@ export type QrLoginSession = {
   status: QrLoginStatus;
   createdAt: number;
   expiresAt: number;
+  expectedUserId?: number;
   approvedAt?: number;
   approvedByZaloUserId?: string;
   user?: QrLoginUserPayload;
@@ -33,6 +34,7 @@ type QrLoginSessionRow = {
   status: string;
   created_at: number | string;
   expires_at: number | string;
+  expected_user_id: number | null;
   approved_at: number | string | null;
   approved_by_zalo_user_id: string | null;
   user_payload: QrLoginUserPayload | null;
@@ -57,6 +59,7 @@ const ensureStore = async () => {
       status TEXT NOT NULL,
       created_at BIGINT NOT NULL,
       expires_at BIGINT NOT NULL,
+      expected_user_id INTEGER NULL,
       approved_at BIGINT NULL,
       approved_by_zalo_user_id TEXT NULL,
       token TEXT NULL,
@@ -67,6 +70,9 @@ const ensureStore = async () => {
   await prisma.$executeRawUnsafe(
     `ALTER TABLE qr_login_sessions ADD COLUMN IF NOT EXISTS poll_token_hash TEXT NULL`
   );
+  await prisma.$executeRawUnsafe(
+    `ALTER TABLE qr_login_sessions ADD COLUMN IF NOT EXISTS expected_user_id INTEGER NULL`
+  );
   ensured = true;
 };
 
@@ -75,6 +81,7 @@ const mapRow = (row: QrLoginSessionRow): QrLoginSession => ({
   status: row.status as QrLoginStatus,
   createdAt: Number(row.created_at),
   expiresAt: Number(row.expires_at),
+  expectedUserId: row.expected_user_id == null ? undefined : Number(row.expected_user_id),
   approvedAt: row.approved_at == null ? undefined : Number(row.approved_at),
   approvedByZaloUserId: row.approved_by_zalo_user_id ?? undefined,
   user: row.user_payload ?? undefined,
@@ -94,7 +101,8 @@ const purgeExpiredSessions = async () => {
 };
 
 export const createQrLoginSession = async (
-  ttlMs = 2 * 60 * 1000
+  ttlMs = 2 * 60 * 1000,
+  expectedUserId?: number
 ): Promise<{ session: QrLoginSession; pollToken: string }> => {
   await purgeExpiredSessions();
   const sessionId = crypto.randomUUID();
@@ -106,14 +114,16 @@ export const createQrLoginSession = async (
     status: "pending",
     createdAt,
     expiresAt: createdAt + ttlMs,
+    expectedUserId,
   };
   await prisma.$executeRawUnsafe(
-    `INSERT INTO qr_login_sessions (session_id, status, created_at, expires_at, poll_token_hash)
-     VALUES ($1, $2, $3, $4, $5)`,
+    `INSERT INTO qr_login_sessions (session_id, status, created_at, expires_at, expected_user_id, poll_token_hash)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
     session.sessionId,
     session.status,
     session.createdAt,
     session.expiresAt,
+    session.expectedUserId ?? null,
     pollTokenHash
   );
   return { session, pollToken };
