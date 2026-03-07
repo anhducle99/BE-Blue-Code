@@ -170,7 +170,7 @@ const buildMiniAppLaunchUrl = (
   }
 
   return {
-    url: `${safeBase}/?${query.toString()}#/login`,
+    url: `${safeBase}/login?${query.toString()}`,
     mode: "web",
   };
 };
@@ -561,6 +561,15 @@ router.post("/auth/qr-login/approve", async (req, res) => {
       return res.status(403).json({
         success: false,
         message: "Tai khoan chua thuoc organization nao",
+      });
+    }
+
+    if (typeof session.expectedUserId === "number" && session.expectedUserId !== user.id) {
+      return res.status(403).json({
+        success: false,
+        code: "QR_BOUND_TO_OTHER_ACCOUNT",
+        message:
+          "Tai khoan Zalo nay da lien ket voi tai khoan web khac. QR nay duoc tao cho tai khoan khac, khong the dang nhap.",
       });
     }
 
