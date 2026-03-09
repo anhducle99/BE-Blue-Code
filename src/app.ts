@@ -23,7 +23,15 @@ type CallLogRow = {
 };
 import { Server as SocketServer } from "socket.io";
 import jwt from "jsonwebtoken";
-import { onlineUsers, setIO, callTimers, normalizeName, findSocketByDepartmentName, emitCallLogUpdated } from "./socketStore";
+import {
+  onlineUsers,
+  setIO,
+  callTimers,
+  normalizeName,
+  buildOnlineUserKey,
+  findSocketByDepartmentName,
+  emitCallLogUpdated,
+} from "./socketStore";
 import { getOrganizationIdForCall } from "./services/orgCache";
 
 const SOCKET_JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
@@ -274,7 +282,7 @@ io.on("connection", (socket) => {
     const safeUserId = Number(user.id);
 
     if (!safeName || !Number.isInteger(safeUserId) || safeUserId <= 0) return;
-    const key = `${safeName}_${safeDeptName || safeName}`;
+    const key = buildOnlineUserKey(safeName, safeDeptName || safeName, user.organization_id ?? null);
 
     if (user.role === "SuperAdmin") {
       const orgs = await prisma.organization.findMany({ select: { id: true } });
@@ -289,6 +297,7 @@ io.on("connection", (socket) => {
       name: safeName,
       department_id: safeDeptId,
       department_name: safeDeptName,
+      organization_id: user.organization_id ?? null,
     });
 
     (socket.data as { registeredUser?: RegisteredSocketUser }).registeredUser = {
@@ -427,7 +436,10 @@ io.on("connection", (socket) => {
           fromUser: updatedLog.from_user,
         };
 
-        const callerSocket = findSocketByDepartmentName(updatedLog.from_user);
+        const callerSocket = findSocketByDepartmentName(
+          updatedLog.from_user,
+          organizationId ?? registeredUser.organizationId
+        );
         if (callerSocket) {
           callerSocket.emit("callStatusUpdate", payload);
         }
@@ -595,7 +607,7 @@ io.on("connection", (socket) => {
         const targetNames = Array.from(new Set(updatedLogs.map((log: CallLogRow) => log.toUser)));
 
         targetNames.forEach((target: string) => {
-          const targetSocket = findSocketByDepartmentName(target);
+          const targetSocket = findSocketByDepartmentName(target, organizationId);
           if (targetSocket) {
             targetSocket.emit("callStatusUpdate", {
               callId: safeCallId,

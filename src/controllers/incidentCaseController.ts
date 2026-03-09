@@ -33,7 +33,7 @@ export const getIncidentCases = async (req: Request, res: Response) => {
     const endDate = req.query.endDate as string | undefined;
     const list = await IncidentCaseModel.findByOrganization(organizationId, { startDate, endDate });
     const allHandlerKeys = list.flatMap((row) => row.handlerKeys);
-    const statusMap = await HandlerStateModel.getStatusMapForHandlers(allHandlerKeys);
+    const statusMap = await HandlerStateModel.getStatusMapForHandlers(allHandlerKeys, organizationId);
     const withStatus = list.map((row) => {
       const handlers = row.handlerKeys.map((key) => {
         const currentId = statusMap.get(key) ?? null;
@@ -70,6 +70,9 @@ export const acceptIncident = async (req: Request, res: Response) => {
     if (!dbUser || !dbUser.name) {
       return res.status(403).json({ success: false, message: "Không xác định được handler từ tài khoản đăng nhập" });
     }
+    if (!dbUser.organization_id) {
+      return res.status(403).json({ success: false, message: "User khÃ´ng thuá»™c organization nÃ o" });
+    }
     const handlerKey = String(dbUser.name).trim();
     const incidentCaseId = parseInt(req.params.id, 10);
     if (isNaN(incidentCaseId)) {
@@ -80,7 +83,10 @@ export const acceptIncident = async (req: Request, res: Response) => {
       return res.status(404).json({ success: false, message: "Không tìm thấy sự cố" });
     }
     try {
-      await HandlerStateModel.accept(handlerKey, incidentCaseId);
+      if (caseRow.organizationId !== dbUser.organization_id) {
+        return res.status(403).json({ success: false, message: "KhÃ´ng cÃ³ quyá»n thao tÃ¡c vá»›i sá»± cá»‘ nÃ y" });
+      }
+      await HandlerStateModel.accept(handlerKey, incidentCaseId, dbUser.organization_id);
     } catch (e: any) {
       if (e.message === "HANDLER_BUSY") {
         return res.status(409).json({
@@ -111,9 +117,12 @@ export const releaseIncident = async (req: Request, res: Response) => {
     if (!dbUser || !dbUser.name) {
       return res.status(403).json({ success: false, message: "Không xác định được handler từ tài khoản đăng nhập" });
     }
+    if (!dbUser.organization_id) {
+      return res.status(403).json({ success: false, message: "User khÃ´ng thuá»™c organization nÃ o" });
+    }
     const handlerKey = String(dbUser.name).trim();
-    const incidentCaseId = await HandlerStateModel.getCurrentIncidentCaseId(handlerKey);
-    await HandlerStateModel.release(handlerKey);
+    const incidentCaseId = await HandlerStateModel.getCurrentIncidentCaseId(handlerKey, dbUser.organization_id);
+    await HandlerStateModel.release(handlerKey, dbUser.organization_id);
     if (incidentCaseId != null) {
       const caseRow = await IncidentCaseModel.findById(incidentCaseId);
       if (caseRow) {

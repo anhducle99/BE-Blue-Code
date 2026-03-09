@@ -7,10 +7,11 @@ import {
   getQrLoginSessionStatusController,
 } from "../controllers/authController";
 import { authMiddleware } from "../middleware/authMiddleware";
+import { requireSuperAdmin } from "../middleware/roleMiddleware";
 
 const router = Router();
 
-router.post("/register", register);
+router.post("/register", authMiddleware, requireSuperAdmin, register);
 router.post("/login", login);
 router.post("/zalo-login", zaloLogin);
 router.post("/qr-login/session", authMiddleware, createQrLoginSessionController);

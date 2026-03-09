@@ -85,9 +85,6 @@ const expireStalePendingMiniCalls = async (callTargets: string[], organizationId
     ...buildOrgFilter(organizationId),
   };
 
-  const staleCount = await prisma.callLog.count({ where: staleWhere });
-  if (staleCount === 0) return 0;
-
   const result = await prisma.callLog.updateMany({
     where: staleWhere,
     data: {

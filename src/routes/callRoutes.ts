@@ -2,7 +2,15 @@ import { Router } from "express";
 import { CallLogModel } from "../models/CallLog";
 import { IncidentCaseModel } from "../models/IncidentCase";
 import { prisma } from "../models/db";
-import { getIO, onlineUsers, callTimers, normalizeName, emitCallLogCreated, emitCallLogUpdated } from "../socketStore";
+import {
+  getIO,
+  onlineUsers,
+  callTimers,
+  normalizeName,
+  buildOnlineUserKey,
+  emitCallLogCreated,
+  emitCallLogUpdated,
+} from "../socketStore";
 import { randomUUID } from "crypto";
 import { authMiddleware } from "../middleware/authMiddleware";
 import { validateCallPermission } from "../middleware/validateCallPermission";
@@ -107,7 +115,11 @@ router.post("/", authMiddleware, validateCallPermission, async (req, res) => {
       if (department) {
         const departmentUsers = deptUsersMap.get(String(department.id)) || [];
         for (const deptUser of departmentUsers) {
-          const userKey = `${deptUser.name}_${deptUser.department_name || deptUser.name}`;
+          const userKey = buildOnlineUserKey(
+            deptUser.name,
+            deptUser.department_name || deptUser.name,
+            organizationId
+          );
           const targetUser = onlineUsers.get(userKey);
           entries.push({
             payload: {
@@ -126,7 +138,13 @@ router.post("/", authMiddleware, validateCallPermission, async (req, res) => {
           (u) => normalizeName(u.name) === normalizedTargetName || u.name.trim() === targetName.trim()
         );
         const canonicalTarget = matchedTargetUser?.name ?? targetName;
-        const targetUser = onlineUsers.get(key);
+        const targetUser = onlineUsers.get(
+          buildOnlineUserKey(
+            canonicalTarget,
+            matchedTargetUser?.department_name || canonicalTarget,
+            organizationId
+          )
+        );
         entries.push({
           payload: {
             call_id: callId,
@@ -230,6 +248,21 @@ router.post("/", authMiddleware, validateCallPermission, async (req, res) => {
             ioRef.to(`organization_${organizationId}`).emit("callStatusUpdate", {
               callId, toDept: log.toUser, toUser: log.toUser, status: "timeout",
             });
+            emitCallLogUpdated(
+              {
+                id: log.id,
+                call_id: log.callId,
+                from_user: log.fromUser,
+                to_user: log.toUser,
+                message: log.message ?? undefined,
+                image_url: log.imageUrl ?? undefined,
+                status: log.status,
+                created_at: log.createdAt,
+                accepted_at: log.acceptedAt ?? undefined,
+                rejected_at: log.rejectedAt ?? undefined,
+              },
+              organizationId
+            );
           });
         }
       } catch (err) {
