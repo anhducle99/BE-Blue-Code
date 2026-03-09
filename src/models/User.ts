@@ -105,7 +105,6 @@ export class UserModel {
     return sanitizeUser(user, includePassword);
   }
 
-  /** Single-query lookup by name (e.g. socket register fallback). Uses case-insensitive match. */
   static async findByName(name: string): Promise<IUser | null> {
     if (!name || typeof name !== "string" || !name.trim()) return null;
     const user = await prisma.user.findFirst({

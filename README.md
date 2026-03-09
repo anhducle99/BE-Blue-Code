@@ -38,6 +38,10 @@ npm run dev:app
 
 Backend mặc định chạy ở `http://localhost:5000`.
 
+Lưu ý current state:
+
+- `npm run dev:app` và `npm run build` hiện tự chạy `npm run prisma:generate` trước để tránh dùng Prisma client stale/sai engine sau khi đổi schema hoặc client từng được generate theo mode khác.
+
 ## Scripts chính
 
 | Script | Mục đích current state |
