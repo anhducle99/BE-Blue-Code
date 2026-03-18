@@ -5,6 +5,7 @@ import { CallLogModel } from "../models/CallLog";
 import { getIO, emitCallLogUpdated } from "../socketStore";
 import jwt from "jsonwebtoken";
 import axios from "axios";
+import bcrypt from "bcrypt";
 import { authMiddleware } from "../middleware/authMiddleware";
 import { approveQrLoginSession, getQrLoginSession } from "../services/qrLoginSessionStore";
 
@@ -73,6 +74,58 @@ const getPendingFreshAfter = () => new Date(Date.now() - MINI_PENDING_MAX_AGE_MS
 
 const buildOrgFilter = (organizationId?: number | null) =>
   typeof organizationId === "number" ? { organizationId } : { organizationId: -1 };
+
+const isLocalDevRequest = (req: any) => {
+  if (IS_PRODUCTION) return false;
+
+  const host = String(req.headers?.host || "").toLowerCase();
+  const forwardedFor = String(req.headers?.["x-forwarded-for"] || "")
+    .split(",")[0]
+    .trim()
+    .toLowerCase();
+  const ip = String(req.ip || req.socket?.remoteAddress || "")
+    .replace("::ffff:", "")
+    .toLowerCase();
+
+  const localHosts = new Set(["localhost", "127.0.0.1", "::1"]);
+  const normalizedHost = host.split(":")[0];
+
+  return (
+    localHosts.has(normalizedHost) ||
+    localHosts.has(forwardedFor) ||
+    localHosts.has(ip)
+  );
+};
+
+const formatMiniAppUserResponse = (user: {
+  id: number;
+  name: string;
+  email: string;
+  role: string;
+  organizationId?: number | null;
+  departmentId?: number | null;
+  departmentName?: string | null;
+  organizationName?: string | null;
+  isDepartmentAccount: boolean;
+  isFloorAccount: boolean;
+  zaloUserId?: string | null;
+  zaloDisplayName?: string | null;
+  zaloVerified?: boolean | null;
+}) => ({
+  id: user.id,
+  name: user.name,
+  email: user.email,
+  role: user.role,
+  organizationId: user.organizationId ?? undefined,
+  departmentId: user.departmentId ?? undefined,
+  departmentName: user.departmentName ?? undefined,
+  organizationName: user.organizationName ?? undefined,
+  isDepartmentAccount: user.isDepartmentAccount,
+  isFloorAccount: user.isFloorAccount,
+  zaloUserId: user.zaloUserId ?? null,
+  zaloDisplayName: user.zaloDisplayName ?? null,
+  zaloVerified: Boolean(user.zaloVerified),
+});
 
 const expireStalePendingMiniCalls = async (callTargets: string[], organizationId?: number | null) => {
   const toUserWhere = buildToUserWhere(callTargets);
@@ -305,6 +358,110 @@ router.post("/auth/link-token", authMiddleware, async (req: any, res) => {
     return res.status(500).json({
       success: false,
       message: "Failed to create link token",
+      error: error.message,
+    });
+  }
+});
+
+router.post("/auth/dev-login", async (req, res) => {
+  try {
+    if (!isLocalDevRequest(req)) {
+      return res.status(403).json({
+        success: false,
+        message: "Dev login chi ho tro khi chay local",
+      });
+    }
+
+    const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
+    const password = typeof req.body?.password === "string" ? req.body.password : "";
+
+    if (!email || !password) {
+      return res.status(400).json({
+        success: false,
+        message: "Missing email or password",
+      });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { email },
+      include: {
+        department: { select: { name: true } },
+        organization: { select: { name: true } },
+      },
+    });
+
+    if (!user?.password) {
+      return res.status(401).json({
+        success: false,
+        message: "Email hoac password sai",
+      });
+    }
+
+    const passwordOk = await bcrypt.compare(password, user.password);
+    if (!passwordOk) {
+      return res.status(401).json({
+        success: false,
+        message: "Email hoac password sai",
+      });
+    }
+
+    if (!user.isDepartmentAccount) {
+      return res.status(403).json({
+        success: false,
+        message: "Chi tai khoan department moi duoc dang nhap mini app local",
+      });
+    }
+
+    if (user.isFloorAccount) {
+      return res.status(403).json({
+        success: false,
+        message: "Tai khoan floor account khong duoc dang nhap mini app local",
+      });
+    }
+
+    if (typeof user.organizationId !== "number") {
+      return res.status(403).json({
+        success: false,
+        message: "Tai khoan chua thuoc organization nao",
+      });
+    }
+
+    const token = jwt.sign(
+      {
+        userId: user.id,
+        type: "mini_app_web",
+      },
+      JWT_SECRET,
+      { expiresIn: "7d" }
+    );
+
+    return res.json({
+      success: true,
+      message: "Dev login thanh cong",
+      data: {
+        token,
+        user: formatMiniAppUserResponse({
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+          organizationId: user.organizationId,
+          departmentId: user.departmentId,
+          departmentName: user.department?.name ?? null,
+          organizationName: user.organization?.name ?? null,
+          isDepartmentAccount: user.isDepartmentAccount,
+          isFloorAccount: user.isFloorAccount,
+          zaloUserId: user.zaloUserId,
+          zaloDisplayName: user.zaloDisplayName,
+          zaloVerified: user.zaloVerified,
+        }),
+      },
+    });
+  } catch (error: any) {
+    console.error("[MiniAppAuth] Dev login error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Khong the dang nhap local mini app",
       error: error.message,
     });
   }
