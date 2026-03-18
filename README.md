@@ -8,6 +8,7 @@ Current state backend chịu trách nhiệm cho:
 
 - Auth web bằng email/password
 - Zalo login, link token, QR login session
+- Mini app dev-login local cho `localhost` de test browser khong co Zalo SDK
 - Quản lý user, department, organization
 - Lịch sử cuộc gọi và thống kê
 - Tạo và cập nhật call log theo thời gian thực
@@ -85,6 +86,7 @@ Biến mini app / production:
 - `src/app.ts` tạo cả Express app lẫn Socket.IO server; `src/index.ts` là listener entrypoint chính.
 - Repo hiện dùng đồng thời Prisma và model layer trong `src/models`.
 - `create-env-files.ps1` không tạo đầy đủ các biến mini app production đang được code sử dụng.
+- `POST /api/mini/auth/dev-login` chi hoạt động ngoài production và chỉ nhận request local (`localhost`, `127.0.0.1`, `::1`) để đăng nhập mini app browser local bằng email/password của department account.
 
 ### Update 2026-03-07
 
