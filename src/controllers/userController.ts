@@ -18,11 +18,15 @@ export const getUsers = async (req: Request, res: Response) => {
 
     if (userRole !== "SuperAdmin") {
       if (!userId) {
-        return res.status(401).json({ success: false, message: "KhÃ´ng tÃ¬m tháº¥y thÃ´ng tin ngÆ°á»i dÃ¹ng" });
+        return res
+          .status(401)
+          .json({ success: false, message: "Không tìm thấy thông tin người dùng" });
       }
       const user = await UserModel.findById(userId);
       if (!user?.organization_id) {
-        return res.status(403).json({ success: false, message: "User khÃ´ng thuá»™c organization nÃ o" });
+        return res
+          .status(403)
+          .json({ success: false, message: "User không thuộc organization nào" });
       }
       organizationId = user.organization_id;
     }
@@ -36,7 +40,7 @@ export const getUsers = async (req: Request, res: Response) => {
     const users = await UserModel.findAll(organizationId);
     res.json({ success: true, data: users });
   } catch {
-    res.status(500).json({ success: false, message: "Server error" });
+    res.status(500).json({ success: false, message: "Lỗi server" });
   }
 };
 
@@ -44,22 +48,24 @@ export const getMe = async (req: Request, res: Response) => {
   try {
     const userId = (req as any).user?.id;
     if (!userId) {
-      return res.status(401).json({ success: false, message: "KhÃ´ng tÃ¬m tháº¥y thÃ´ng tin ngÆ°á»i dÃ¹ng" });
+      return res
+        .status(401)
+        .json({ success: false, message: "Không tìm thấy thông tin người dùng" });
     }
     const user = await UserModel.findById(userId);
     if (!user) {
-      return res.status(404).json({ success: false, message: "User not found" });
+      return res.status(404).json({ success: false, message: "Không tìm thấy người dùng" });
     }
     res.json({ success: true, data: user });
   } catch {
-    res.status(500).json({ success: false, message: "Server error" });
+    res.status(500).json({ success: false, message: "Lỗi server" });
   }
 };
 
 export const getUser = async (req: Request, res: Response) => {
   const id = parseInt(req.params.id, 10);
   if (isNaN(id)) {
-    return res.status(400).json({ success: false, message: "ID khÃ´ng há»£p lá»‡" });
+    return res.status(400).json({ success: false, message: "ID không hợp lệ" });
   }
 
   try {
@@ -69,7 +75,7 @@ export const getUser = async (req: Request, res: Response) => {
     if (!user) {
       return res.status(404).json({
         success: false,
-        message: "User not found",
+        message: "Không tìm thấy người dùng",
       });
     }
 
@@ -83,20 +89,19 @@ export const getUser = async (req: Request, res: Response) => {
       ) {
         return res.status(403).json({
           success: false,
-          message: "KhÃ´ng cÃ³ quyá»n truy cáº­p user nÃ y",
+          message: "Không có quyền truy cập user này",
         });
       }
     }
 
     res.json({ success: true, data: user });
   } catch {
-    res.status(500).json({ success: false, message: "Server error" });
+    res.status(500).json({ success: false, message: "Lỗi server" });
   }
 };
 
 export const createUser = async (req: Request, res: Response) => {
   try {
-    const currentUserId = (req as any).user?.id;
     const {
       name,
       email,
@@ -113,7 +118,7 @@ export const createUser = async (req: Request, res: Response) => {
     if (!email || !password) {
       return res.status(400).json({
         success: false,
-        message: "Email vÃ  password lÃ  báº¯t buá»™c",
+        message: "Email và mật khẩu là bắt buộc",
       });
     }
 
@@ -123,14 +128,14 @@ export const createUser = async (req: Request, res: Response) => {
     if (!isSuperAdmin && !requesterOrgId) {
       return res.status(403).json({
         success: false,
-        message: "KhÃ´ng cÃ³ quyá»n táº¡o user khi chÆ°a thuá»™c organization",
+        message: "Không có quyền tạo user khi chưa thuộc organization",
       });
     }
 
     if (!isSuperAdmin && role === "SuperAdmin") {
       return res.status(403).json({
         success: false,
-        message: "KhÃ´ng thá»ƒ táº¡o tÃ i khoáº£n SuperAdmin",
+        message: "Không thể tạo tài khoản SuperAdmin",
       });
     }
 
@@ -138,7 +143,7 @@ export const createUser = async (req: Request, res: Response) => {
       if (requesterOrgId && organization_id !== requesterOrgId) {
         return res.status(403).json({
           success: false,
-          message: "KhÃ´ng thá»ƒ táº¡o user cho organization khÃ¡c",
+          message: "Không thể tạo user cho organization khác",
         });
       }
     }
@@ -150,7 +155,7 @@ export const createUser = async (req: Request, res: Response) => {
       if (!department) {
         return res.status(400).json({
           success: false,
-          message: "Department khÃ´ng tá»“n táº¡i",
+          message: "Department không tồn tại",
         });
       }
 
@@ -162,7 +167,7 @@ export const createUser = async (req: Request, res: Response) => {
       ) {
         return res.status(403).json({
           success: false,
-          message: "Department khÃ´ng thuá»™c organization cá»§a báº¡n",
+          message: "Department không thuộc organization của bạn",
         });
       }
     }
@@ -171,7 +176,7 @@ export const createUser = async (req: Request, res: Response) => {
     if (existing) {
       return res.status(400).json({
         success: false,
-        message: "Email already exists",
+        message: "Email đã tồn tại",
       });
     }
 
@@ -194,24 +199,23 @@ export const createUser = async (req: Request, res: Response) => {
 
     res.status(201).json({ success: true, data: user });
   } catch {
-    res.status(500).json({ success: false, message: "Server error" });
+    res.status(500).json({ success: false, message: "Lỗi server" });
   }
 };
 
 export const updateUser = async (req: Request, res: Response) => {
   const id = parseInt(req.params.id, 10);
   if (isNaN(id)) {
-    return res.status(400).json({ success: false, message: "ID khÃ´ng há»£p lá»‡" });
+    return res.status(400).json({ success: false, message: "ID không hợp lệ" });
   }
 
   try {
-    const currentUserId = (req as any).user?.id;
     const existingUser = await UserModel.findById(id);
 
     if (!existingUser) {
       return res.status(404).json({
         success: false,
-        message: "User not found",
+        message: "Không tìm thấy người dùng",
       });
     }
 
@@ -222,7 +226,7 @@ export const updateUser = async (req: Request, res: Response) => {
       if (!requesterOrgId) {
         return res.status(403).json({
           success: false,
-          message: "KhÃ´ng cÃ³ quyá»n cáº­p nháº­t user khi chÆ°a thuá»™c organization",
+          message: "Không có quyền cập nhật user khi chưa thuộc organization",
         });
       }
 
@@ -232,14 +236,14 @@ export const updateUser = async (req: Request, res: Response) => {
       ) {
         return res.status(403).json({
           success: false,
-          message: "KhÃ´ng cÃ³ quyá»n cáº­p nháº­t user nÃ y",
+          message: "Không có quyền cập nhật user này",
         });
       }
 
       if (existingUser.role === "SuperAdmin" || req.body.role === "SuperAdmin") {
         return res.status(403).json({
           success: false,
-          message: "KhÃ´ng thá»ƒ thao tÃ¡c vÃ i tÃ i khoáº£n SuperAdmin",
+          message: "Không thể thao tác với tài khoản SuperAdmin",
         });
       }
     }
@@ -251,7 +255,7 @@ export const updateUser = async (req: Request, res: Response) => {
       if (!isSuperAdmin && requesterOrgId && organization_id !== requesterOrgId) {
         return res.status(403).json({
           success: false,
-          message: "KhÃ´ng thá»ƒ thay Ä‘á»•i organization_id",
+          message: "Không thể thay đổi organization_id",
         });
       }
       updateData.organization_id = organization_id;
@@ -270,7 +274,7 @@ export const updateUser = async (req: Request, res: Response) => {
         ) {
           return res.status(403).json({
             success: false,
-            message: "Department khÃ´ng thuá»™c organization cá»§a báº¡n",
+            message: "Department không thuộc organization của bạn",
           });
         }
         updateData.department_id = department_id;
@@ -284,14 +288,14 @@ export const updateUser = async (req: Request, res: Response) => {
     const updatedUser = await UserModel.update(id, updateData);
     res.json({ success: true, data: updatedUser });
   } catch {
-    res.status(500).json({ success: false, message: "Server error" });
+    res.status(500).json({ success: false, message: "Lỗi server" });
   }
 };
 
 export const deleteUser = async (req: Request, res: Response) => {
   const id = parseInt(req.params.id, 10);
   if (isNaN(id)) {
-    return res.status(400).json({ success: false, message: "ID khÃ´ng há»£p lá»‡" });
+    return res.status(400).json({ success: false, message: "ID không hợp lệ" });
   }
 
   try {
@@ -301,7 +305,7 @@ export const deleteUser = async (req: Request, res: Response) => {
     if (!user) {
       return res.status(404).json({
         success: false,
-        message: "User khÃ´ng tá»“n táº¡i",
+        message: "User không tồn tại",
       });
     }
 
@@ -312,21 +316,21 @@ export const deleteUser = async (req: Request, res: Response) => {
       if (!requesterOrgId) {
         return res.status(403).json({
           success: false,
-          message: "KhÃ´ng cÃ³ quyá»n xÃ³a user khi chÆ°a thuá»™c organization",
+          message: "Không có quyền xóa user khi chưa thuộc organization",
         });
       }
 
       if (user.organization_id && user.organization_id !== requesterOrgId) {
         return res.status(403).json({
           success: false,
-          message: "KhÃ´ng cÃ³ quyá»n xÃ³a user nÃ y",
+          message: "Không có quyền xóa user này",
         });
       }
 
       if (user.role === "SuperAdmin") {
         return res.status(403).json({
           success: false,
-          message: "KhÃ´ng cÃ³ quyá»n xÃ³a tÃ i khoáº£n SuperAdmin",
+          message: "Không có quyền xóa tài khoản SuperAdmin",
         });
       }
     }
@@ -334,21 +338,21 @@ export const deleteUser = async (req: Request, res: Response) => {
     if (currentUserId && id === currentUserId) {
       return res.status(403).json({
         success: false,
-        message: "KhÃ´ng thá»ƒ xÃ³a chÃ­nh mÃ¬nh",
+        message: "Không thể xóa chính mình",
       });
     }
 
     await UserModel.delete(id);
-    res.json({ success: true, message: "User deleted" });
+    res.json({ success: true, message: "Xóa người dùng thành công" });
   } catch {
-    res.status(500).json({ success: false, message: "Server error" });
+    res.status(500).json({ success: false, message: "Lỗi server" });
   }
 };
 
 export const unlinkUserZalo = async (req: Request, res: Response) => {
   const id = parseInt(req.params.id, 10);
   if (isNaN(id)) {
-    return res.status(400).json({ success: false, message: "ID khÃ´ng há»£p lá»‡" });
+    return res.status(400).json({ success: false, message: "ID không hợp lệ" });
   }
 
   try {
@@ -357,15 +361,15 @@ export const unlinkUserZalo = async (req: Request, res: Response) => {
     if (currentUserRole !== "Admin" && currentUserRole !== "SuperAdmin") {
       return res.status(403).json({
         success: false,
-        message: "Chá»‰ Admin hoáº·c SuperAdmin má»›i cÃ³ quyá»n gá»¡ liÃªn káº¿t Zalo",
+        message: "Chỉ Admin hoặc SuperAdmin mới có quyền gỡ liên kết Zalo",
       });
     }
-    const existingUser = await UserModel.findById(id);
 
+    const existingUser = await UserModel.findById(id);
     if (!existingUser) {
       return res.status(404).json({
         success: false,
-        message: "User not found",
+        message: "Không tìm thấy người dùng",
       });
     }
 
@@ -379,7 +383,7 @@ export const unlinkUserZalo = async (req: Request, res: Response) => {
       ) {
         return res.status(403).json({
           success: false,
-          message: "KhÃ´ng cÃ³ quyá»n cáº­p nháº­t user nÃ y",
+          message: "Không có quyền cập nhật user này",
         });
       }
     }
@@ -387,17 +391,17 @@ export const unlinkUserZalo = async (req: Request, res: Response) => {
     if (!existingUser.zalo_user_id && !existingUser.zalo_display_name) {
       return res.status(400).json({
         success: false,
-        message: "TÃ i khoáº£n chÆ°a liÃªn káº¿t Zalo",
+        message: "Tài khoản chưa liên kết Zalo",
       });
     }
 
     const updatedUser = await UserModel.unlinkZalo(id);
     return res.json({
       success: true,
-      message: "Gá»¡ liÃªn káº¿t Zalo thÃ nh cÃ´ng",
+      message: "Gỡ liên kết Zalo thành công",
       data: updatedUser,
     });
   } catch {
-    return res.status(500).json({ success: false, message: "Server error" });
+    return res.status(500).json({ success: false, message: "Lỗi server" });
   }
 };

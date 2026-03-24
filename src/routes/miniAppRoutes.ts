@@ -2,12 +2,15 @@ import { Router } from "express";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../models/db";
 import { CallLogModel } from "../models/CallLog";
+import { UserModel } from "../models/User";
+import { DepartmentModel } from "../models/Department";
 import { getIO, emitCallLogUpdated } from "../socketStore";
 import jwt from "jsonwebtoken";
 import axios from "axios";
 import bcrypt from "bcrypt";
 import { authMiddleware } from "../middleware/authMiddleware";
 import { approveQrLoginSession, getQrLoginSession } from "../services/qrLoginSessionStore";
+import { CallDispatchError, dispatchOutgoingCall } from "../services/callDispatchService";
 
 const router = Router();
 const JWT_SECRET = process.env.JWT_SECRET || "your-secret-key";
@@ -162,6 +165,90 @@ const assertMiniAppLaunchConfig = () => {
   }
 };
 
+const buildMiniAppSessionResponse = (user: {
+  id: number;
+  name: string;
+  email: string;
+  role: string;
+  organizationId?: number | null;
+  departmentId?: number | null;
+  department?: { name: string } | null;
+  organization?: { name: string } | null;
+  isDepartmentAccount: boolean;
+  isFloorAccount: boolean;
+  zaloUserId?: string | null;
+  zaloDisplayName?: string | null;
+  zaloVerified?: boolean | null;
+}) => {
+  const token = jwt.sign(
+    {
+      userId: user.id,
+      type: "mini_app_web",
+    },
+    JWT_SECRET,
+    { expiresIn: "7d" }
+  );
+
+  return {
+    token,
+    user: formatMiniAppUserResponse({
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      organizationId: user.organizationId,
+      departmentId: user.departmentId,
+      departmentName: user.department?.name ?? null,
+      organizationName: user.organization?.name ?? null,
+      isDepartmentAccount: user.isDepartmentAccount,
+      isFloorAccount: user.isFloorAccount,
+      zaloUserId: user.zaloUserId,
+      zaloDisplayName: user.zaloDisplayName,
+      zaloVerified: user.zaloVerified,
+    }),
+  };
+};
+
+const authenticateMiniAppUserByPassword = async (emailRaw: unknown, passwordRaw: unknown) => {
+  const email = typeof emailRaw === "string" ? emailRaw.trim().toLowerCase() : "";
+  const password = typeof passwordRaw === "string" ? passwordRaw : "";
+
+  if (!email || !password) {
+    throw new CallDispatchError(400, "Thiếu email hoặc mật khẩu");
+  }
+
+  const user = await prisma.user.findUnique({
+    where: { email },
+    include: {
+      department: { select: { name: true } },
+      organization: { select: { name: true } },
+    },
+  });
+
+  if (!user?.password) {
+    throw new CallDispatchError(401, "Email hoặc password sai");
+  }
+
+  const passwordOk = await bcrypt.compare(password, user.password);
+  if (!passwordOk) {
+    throw new CallDispatchError(401, "Email hoặc password sai");
+  }
+
+  if (!user.isDepartmentAccount) {
+    throw new CallDispatchError(403, "Chỉ tài khoản department mới được đăng nhập mini app");
+  }
+
+  if (user.isFloorAccount) {
+    throw new CallDispatchError(403, "Tài khoản floor account không được đăng nhập mini app");
+  }
+
+  if (typeof user.organizationId !== "number") {
+    throw new CallDispatchError(403, "Tài khoản chưa thuộc organization nào");
+  }
+
+  return user;
+};
+
 const resolveVerifiedZaloUser = async (accessTokenRaw: unknown) => {
   const accessToken = typeof accessTokenRaw === "string" ? accessTokenRaw.trim() : "";
   if (!accessToken) {
@@ -229,7 +316,7 @@ export const miniAppAuthMiddleware = async (req: any, res: any, next: any) => {
   try {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      return res.status(401).json({ error: "Missing or invalid token" });
+      return res.status(401).json({ error: "Thiếu token hoặc token không hợp lệ" });
     }
 
     const token = authHeader.substring(7);
@@ -237,7 +324,7 @@ export const miniAppAuthMiddleware = async (req: any, res: any, next: any) => {
     const tokenType = decoded.type;
 
     if (!tokenType || !MINI_TOKEN_TYPES.has(tokenType)) {
-      return res.status(401).json({ error: "Invalid mini app token type" });
+      return res.status(401).json({ error: "Loại token mini app không hợp lệ" });
     }
 
     const userId = typeof decoded.userId === "number"
@@ -247,7 +334,7 @@ export const miniAppAuthMiddleware = async (req: any, res: any, next: any) => {
       : null;
 
     if (!userId) {
-      return res.status(401).json({ error: "Invalid token payload" });
+      return res.status(401).json({ error: "Payload token không hợp lệ" });
     }
 
     const user = await prisma.user.findUnique({
@@ -256,19 +343,19 @@ export const miniAppAuthMiddleware = async (req: any, res: any, next: any) => {
     });
 
     if (!user) {
-      return res.status(401).json({ error: "User not found" });
+      return res.status(401).json({ error: "Không tìm thấy người dùng" });
     }
 
     if (!user.isDepartmentAccount) {
-      return res.status(403).json({ error: "Mini app chi ho tro tai khoan department" });
+      return res.status(403).json({ error: "Mini app chỉ hỗ trợ tài khoản department" });
     }
 
     if (user.isFloorAccount) {
-      return res.status(403).json({ error: "Tai khoan floor account khong duoc phep truy cap mini app" });
+      return res.status(403).json({ error: "Tài khoản floor account không được phép truy cập mini app" });
     }
 
     if (typeof user.organizationId !== "number") {
-      return res.status(403).json({ error: "Tai khoan chua thuoc organization nao" });
+      return res.status(403).json({ error: "Tài khoản chưa thuộc organization nào" });
     }
 
     let departmentName: string | null = null;
@@ -280,14 +367,24 @@ export const miniAppAuthMiddleware = async (req: any, res: any, next: any) => {
       departmentName = department?.name || null;
     }
 
+    let organizationName: string | null = null;
+    if (user.organizationId) {
+      const organization = await prisma.organization.findUnique({
+        where: { id: user.organizationId },
+        select: { name: true },
+      });
+      organizationName = organization?.name || null;
+    }
+
     req.miniUser = {
       ...user,
       departmentName: departmentName || undefined,
+      organizationName: organizationName || undefined,
     };
     req.miniCallTargets = collectMiniCallTargets(user.name, departmentName);
     next();
   } catch (error) {
-    return res.status(401).json({ error: "Invalid token" });
+    return res.status(401).json({ error: "Token không hợp lệ" });
   }
 };
 
@@ -299,7 +396,7 @@ router.post("/auth/link-token", authMiddleware, async (req: any, res) => {
     if (!userId) {
       return res.status(401).json({
         success: false,
-        message: "Missing user id",
+        message: "Thiếu user id",
       });
     }
 
@@ -311,21 +408,21 @@ router.post("/auth/link-token", authMiddleware, async (req: any, res) => {
     if (!user) {
       return res.status(404).json({
         success: false,
-        message: "User not found",
+        message: "Không tìm thấy người dùng",
       });
     }
 
     if (!user.isDepartmentAccount) {
       return res.status(403).json({
         success: false,
-        message: "Chi tai khoan department moi duoc lien ket Zalo",
+        message: "Chỉ tài khoản department mới được liên kết Zalo",
       });
     }
 
     if (user.isFloorAccount) {
       return res.status(403).json({
         success: false,
-        message: "Tai khoan floor account khong duoc lien ket Zalo mini app",
+        message: "Tài khoản floor account không được liên kết Zalo mini app",
       });
     }
 
@@ -345,7 +442,7 @@ router.post("/auth/link-token", authMiddleware, async (req: any, res) => {
 
     return res.json({
       success: true,
-      message: "Link token created",
+      message: "Đã tạo link token",
       data: {
         linkToken,
         expiresInSeconds: 600,
@@ -357,7 +454,7 @@ router.post("/auth/link-token", authMiddleware, async (req: any, res) => {
     console.error("[MiniAppAuth] Create link token error:", error);
     return res.status(500).json({
       success: false,
-      message: "Failed to create link token",
+      message: "Không thể tạo link token",
       error: error.message,
     });
   }
@@ -368,7 +465,7 @@ router.post("/auth/dev-login", async (req, res) => {
     if (!isLocalDevRequest(req)) {
       return res.status(403).json({
         success: false,
-        message: "Dev login chi ho tro khi chay local",
+        message: "Dev login chỉ hỗ trợ khi chạy local",
       });
     }
 
@@ -378,7 +475,7 @@ router.post("/auth/dev-login", async (req, res) => {
     if (!email || !password) {
       return res.status(400).json({
         success: false,
-        message: "Missing email or password",
+        message: "Thiếu email hoặc mật khẩu",
       });
     }
 
@@ -393,7 +490,7 @@ router.post("/auth/dev-login", async (req, res) => {
     if (!user?.password) {
       return res.status(401).json({
         success: false,
-        message: "Email hoac password sai",
+        message: "Email hoặc password sai",
       });
     }
 
@@ -401,28 +498,28 @@ router.post("/auth/dev-login", async (req, res) => {
     if (!passwordOk) {
       return res.status(401).json({
         success: false,
-        message: "Email hoac password sai",
+        message: "Email hoặc password sai",
       });
     }
 
     if (!user.isDepartmentAccount) {
       return res.status(403).json({
         success: false,
-        message: "Chi tai khoan department moi duoc dang nhap mini app local",
+        message: "Chỉ tài khoản department mới được đăng nhập mini app local",
       });
     }
 
     if (user.isFloorAccount) {
       return res.status(403).json({
         success: false,
-        message: "Tai khoan floor account khong duoc dang nhap mini app local",
+        message: "Tài khoản floor account không được đăng nhập mini app local",
       });
     }
 
     if (typeof user.organizationId !== "number") {
       return res.status(403).json({
         success: false,
-        message: "Tai khoan chua thuoc organization nao",
+        message: "Tài khoản chưa thuộc organization nào",
       });
     }
 
@@ -437,7 +534,7 @@ router.post("/auth/dev-login", async (req, res) => {
 
     return res.json({
       success: true,
-      message: "Dev login thanh cong",
+      message: "Đăng nhập local thành công",
       data: {
         token,
         user: formatMiniAppUserResponse({
@@ -461,7 +558,33 @@ router.post("/auth/dev-login", async (req, res) => {
     console.error("[MiniAppAuth] Dev login error:", error);
     return res.status(500).json({
       success: false,
-      message: "Khong the dang nhap local mini app",
+      message: "Không thể đăng nhập local mini app",
+      error: error.message,
+    });
+  }
+});
+
+router.post("/auth/password-login", async (req, res) => {
+  try {
+    const user = await authenticateMiniAppUserByPassword(req.body?.email, req.body?.password);
+
+    return res.json({
+      success: true,
+      message: "Đăng nhập bằng tài khoản web thành công",
+      data: buildMiniAppSessionResponse(user),
+    });
+  } catch (error: any) {
+    if (error instanceof CallDispatchError) {
+      return res.status(error.statusCode).json({
+        success: false,
+        message: error.message,
+      });
+    }
+
+    console.error("[MiniAppAuth] Password login error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Không thể đăng nhập mini app bằng tài khoản web",
       error: error.message,
     });
   }
@@ -475,7 +598,7 @@ router.post("/auth/link", async (req, res) => {
     if (typeof linkToken !== "string" || !linkToken.trim()) {
       return res.status(400).json({
         success: false,
-        message: "Missing linkToken",
+        message: "Thiếu linkToken",
       });
     }
 
@@ -487,7 +610,7 @@ router.post("/auth/link", async (req, res) => {
     if (decoded.type !== "mini_link_bind") {
       return res.status(401).json({
         success: false,
-        message: "Invalid link token type",
+        message: "Loại link token không hợp lệ",
       });
     }
 
@@ -495,7 +618,7 @@ router.post("/auth/link", async (req, res) => {
     if (!userId) {
       return res.status(401).json({
         success: false,
-        message: "Invalid link payload",
+        message: "Payload link không hợp lệ",
       });
     }
 
@@ -507,28 +630,28 @@ router.post("/auth/link", async (req, res) => {
     if (!user) {
       return res.status(404).json({
         success: false,
-        message: "User not found",
+        message: "Không tìm thấy người dùng",
       });
     }
 
     if (!user.isDepartmentAccount) {
       return res.status(403).json({
         success: false,
-        message: "Chi tai khoan department moi duoc lien ket Zalo",
+        message: "Chỉ tài khoản department mới được liên kết Zalo",
       });
     }
 
     if (user.isFloorAccount) {
       return res.status(403).json({
         success: false,
-        message: "Tai khoan floor account khong duoc lien ket Zalo mini app",
+        message: "Tài khoản floor account không được liên kết Zalo mini app",
       });
     }
 
     if (user.zaloUserId && user.zaloUserId !== zaloUserId) {
       return res.status(409).json({
         success: false,
-        message: "Tai khoan nay da lien ket voi Zalo khac. Hay go lien ket cu truoc khi doi tai khoan.",
+        message: "Tài khoản này đã liên kết với Zalo khác. Hãy gỡ liên kết cũ trước khi đổi tài khoản.",
       });
     }
 
@@ -544,7 +667,7 @@ router.post("/auth/link", async (req, res) => {
 
       return res.json({
         success: true,
-        message: "Tai khoan da lien ket Zalo tu truoc",
+        message: "Tài khoản đã liên kết Zalo từ trước",
         data: {
           token,
           user: {
@@ -580,7 +703,7 @@ router.post("/auth/link", async (req, res) => {
     if (existingLinkedUser) {
       return res.status(409).json({
         success: false,
-        message: `Zalo ID nay da lien ket voi tai khoan khac (${existingLinkedUser.email})`,
+        message: `Zalo ID này đã liên kết với tài khoản khác (${existingLinkedUser.email})`,
       });
     }
 
@@ -619,7 +742,7 @@ router.post("/auth/link", async (req, res) => {
 
     return res.json({
       success: true,
-      message: "Lien ket Zalo thanh cong",
+      message: "Liên kết Zalo thành công",
       data: {
         token,
         user: updated,
@@ -634,18 +757,18 @@ router.post("/auth/link", async (req, res) => {
     if (error?.message === "MISSING_ZALO_ACCESS_TOKEN") {
       return res.status(400).json({
         success: false,
-        message: "Missing zaloAccessToken",
+        message: "Thiếu zaloAccessToken",
       });
     }
     if (error?.message === "INVALID_ZALO_ACCESS_TOKEN") {
       return res.status(401).json({
         success: false,
-        message: "Invalid Zalo access token",
+        message: "Zalo access token không hợp lệ",
       });
     }
     return res.status(401).json({
       success: false,
-      message: "Invalid or expired link token",
+      message: "Link token không hợp lệ hoặc đã hết hạn",
       error: error.message,
     });
   }
@@ -659,7 +782,7 @@ router.post("/auth/qr-login/approve", async (req, res) => {
     if (!sessionId) {
       return res.status(400).json({
         success: false,
-        message: "Missing sessionId",
+        message: "Thiếu sessionId",
       });
     }
 
@@ -667,14 +790,14 @@ router.post("/auth/qr-login/approve", async (req, res) => {
     if (!session) {
       return res.status(404).json({
         success: false,
-        message: "Session not found or expired",
+        message: "Không tìm thấy session hoặc session đã hết hạn",
       });
     }
 
     if (session.status === "approved") {
       return res.json({
         success: true,
-        message: "Session already approved",
+        message: "Session đã được phê duyệt",
       });
     }
 
@@ -693,28 +816,28 @@ router.post("/auth/qr-login/approve", async (req, res) => {
       return res.status(404).json({
         success: false,
         code: "NOT_LINKED",
-        message: "Tai khoan Zalo chua lien ket voi tai khoan web",
+        message: "Tài khoản Zalo chưa liên kết với tài khoản web",
       });
     }
 
     if (!user.isDepartmentAccount) {
       return res.status(403).json({
         success: false,
-        message: "Chi tai khoan department moi duoc phe duyet dang nhap QR",
+        message: "Chỉ tài khoản department mới được phê duyệt đăng nhập QR",
       });
     }
 
     if (user.isFloorAccount) {
       return res.status(403).json({
         success: false,
-        message: "Tai khoan floor account khong duoc phe duyet dang nhap QR",
+        message: "Tài khoản floor account không được phê duyệt đăng nhập QR",
       });
     }
 
     if (typeof user.organizationId !== "number") {
       return res.status(403).json({
         success: false,
-        message: "Tai khoan chua thuoc organization nao",
+        message: "Tài khoản chưa thuộc organization nào",
       });
     }
 
@@ -723,7 +846,7 @@ router.post("/auth/qr-login/approve", async (req, res) => {
         success: false,
         code: "QR_BOUND_TO_OTHER_ACCOUNT",
         message:
-          "Tai khoan Zalo nay da lien ket voi tai khoan web khac. QR nay duoc tao cho tai khoan khac, khong the dang nhap.",
+          "Tài khoản Zalo này đã liên kết với tài khoản web khác. QR này được tạo cho tài khoản khác, không thể đăng nhập.",
       });
     }
 
@@ -747,7 +870,7 @@ router.post("/auth/qr-login/approve", async (req, res) => {
 
     return res.json({
       success: true,
-      message: "Da xac nhan dang nhap tren web",
+      message: "Đã xác nhận đăng nhập trên web",
       data: {
         sessionId,
         userId: user.id,
@@ -759,18 +882,18 @@ router.post("/auth/qr-login/approve", async (req, res) => {
     if (error?.message === "MISSING_ZALO_ACCESS_TOKEN") {
       return res.status(400).json({
         success: false,
-        message: "Missing zaloAccessToken",
+        message: "Thiếu zaloAccessToken",
       });
     }
     if (error?.message === "INVALID_ZALO_ACCESS_TOKEN") {
       return res.status(401).json({
         success: false,
-        message: "Invalid Zalo access token",
+        message: "Zalo access token không hợp lệ",
       });
     }
     return res.status(500).json({
       success: false,
-      message: "Khong the xac nhan dang nhap QR",
+      message: "Không thể xác nhận đăng nhập QR",
       error: error.message,
     });
   }
@@ -783,7 +906,7 @@ router.post("/auth/login", async (req, res) => {
     if (!accessToken) {
       return res.status(400).json({
         success: false,
-        message: "Missing accessToken",
+        message: "Thiếu accessToken",
       });
     }
 
@@ -815,7 +938,7 @@ router.post("/auth/login", async (req, res) => {
       } else {
         return res.status(401).json({
           success: false,
-          message: "Invalid Zalo access token",
+          message: "Zalo access token không hợp lệ",
           error: error.message,
         });
       }
@@ -852,21 +975,21 @@ router.post("/auth/login", async (req, res) => {
     if (!user.isDepartmentAccount) {
       return res.status(403).json({
         success: false,
-        message: "Chi tai khoan department moi duoc dang nhap mini app",
+        message: "Chỉ tài khoản department mới được đăng nhập mini app",
       });
     }
 
     if (user.isFloorAccount) {
       return res.status(403).json({
         success: false,
-        message: "Tai khoan floor account khong duoc dang nhap mini app",
+        message: "Tài khoản floor account không được đăng nhập mini app",
       });
     }
 
     if (typeof user.organizationId !== "number") {
       return res.status(403).json({
         success: false,
-        message: "Tai khoan chua thuoc organization nao",
+        message: "Tài khoản chưa thuộc organization nào",
       });
     }
 
@@ -902,7 +1025,7 @@ router.post("/auth/login", async (req, res) => {
 
     res.json({
       success: true,
-      message: "Login thành công",
+      message: "Đăng nhập thành công",
       data: {
         token,
         user: {
@@ -937,6 +1060,100 @@ router.post("/auth/verify", miniAppAuthMiddleware, async (req: any, res) => {
     success: true,
     user: req.miniUser,
   });
+});
+
+router.get("/dashboard-options", miniAppAuthMiddleware, async (req: any, res) => {
+  try {
+    const user = req.miniUser;
+    const organizationId = user?.organizationId;
+
+    if (typeof organizationId !== "number") {
+      return res.status(403).json({
+        success: false,
+        message: "Tài khoản chưa thuộc organization nào",
+      });
+    }
+
+    const [users, departments] = await Promise.all([
+      UserModel.findAll(organizationId),
+      DepartmentModel.findAll(organizationId),
+    ]);
+
+    const floorAccounts = users
+      .filter((item) => item.is_floor_account === true)
+      .sort((left, right) => (left.name || "").localeCompare(right.name || "", "vi", { sensitivity: "base" }));
+
+    return res.json({
+      success: true,
+      data: {
+        floorAccounts: floorAccounts.map((item) => ({
+          id: item.id!,
+          name: item.name,
+        })),
+        departments: departments.map((item) => ({
+          id: item.id!,
+          name: item.name,
+          phone: item.phone || "",
+        })),
+      },
+    });
+  } catch (error: any) {
+    console.error("[MiniApp] Get dashboard options error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Lỗi lấy dữ liệu dashboard mini app",
+      error: error.message,
+    });
+  }
+});
+
+router.post("/call", miniAppAuthMiddleware, async (req: any, res) => {
+  try {
+    const user = req.miniUser;
+    const organizationId = user?.organizationId;
+    const targetKeys = Array.isArray(req.body?.targetKeys) ? req.body.targetKeys : [];
+    const message =
+      typeof req.body?.message === "string" ? req.body.message.trim() : "";
+    const imageUrl =
+      typeof req.body?.image_url === "string" ? req.body.image_url.trim() : "";
+    const fromDept =
+      (typeof req.body?.fromDept === "string" ? req.body.fromDept.trim() : "") ||
+      user?.departmentName ||
+      user?.name ||
+      "";
+
+    const result = await dispatchOutgoingCall({
+      organizationId,
+      fromDept,
+      targetKeys,
+      excludeUserNames: user?.name ? [user.name] : [],
+      message: message || undefined,
+      imageUrl: imageUrl || undefined,
+    });
+
+    return res.json({
+      success: true,
+      message: "Đã tạo cuộc gọi thành công",
+      data: {
+        callId: result.callId,
+        receiverNames: result.receiverNames,
+      },
+    });
+  } catch (error: any) {
+    if (error instanceof CallDispatchError) {
+      return res.status(error.statusCode).json({
+        success: false,
+        message: error.message,
+      });
+    }
+
+    console.error("[MiniApp] Create outgoing call error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Lỗi tạo cuộc gọi từ mini app",
+      error: error.message,
+    });
+  }
 });
 
 
