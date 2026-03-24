@@ -1,21 +1,24 @@
 # BE-Blue-Code
 
-Backend của BlueCode, cung cấp REST API, Socket.IO realtime và truy cập dữ liệu Postgres qua Prisma cùng các model/service hiện có.
+Backend cua BlueCode, cung cap REST API, Socket.IO realtime va truy cap du lieu Postgres qua Prisma cung cac model/service hien co.
 
-## Phạm vi repo
+## Pham vi repo
 
-Current state backend chịu trách nhiệm cho:
+Current state backend chiu trach nhiem cho:
 
-- Auth web bằng email/password
+- Auth web bang email/password
 - Zalo login, link token, QR login session
 - Mini app dev-login local cho `localhost` de test browser khong co Zalo SDK
-- Quản lý user, department, organization
-- Lịch sử cuộc gọi và thống kê
-- Tạo và cập nhật call log theo thời gian thực
+- Mini app password-login bang email/password web account, nhung van giu guard chi cho department account hop le vao mini app
+- Mini app dashboard options route de tra `floorAccounts` va `departments` scoped theo organization cho home mini app; danh sach `departments` duoc mini app dung nhu cac doi phan ung de goi
+- Mini app outbound call route `POST /api/mini/call` dung chung dispatch logic voi web
+- Quan ly user, department, organization
+- Lich su cuoc goi va thong ke
+- Tao va cap nhat call log theo thoi gian thuc cho ca web `/api/call` va mini app `/api/mini/call`
 - Incident case aggregation
-- Scope theo organization cho dữ liệu và realtime rooms
+- Scope theo organization cho du lieu va realtime rooms
 
-## Entry points chính
+## Entry points chinh
 
 - `src/app.ts`
 - `src/index.ts`
@@ -26,7 +29,7 @@ Current state backend chịu trách nhiệm cho:
 - `src/socketStore.ts`
 - `prisma/schema.prisma`
 
-## Cài đặt và chạy local
+## Cai dat va chay local
 
 ```powershell
 cd BE-Blue-Code
@@ -37,29 +40,29 @@ npx prisma migrate deploy
 npm run dev:app
 ```
 
-Backend mặc định chạy ở `http://localhost:5000`.
+Backend mac dinh chay o `http://localhost:5000`.
 
-Lưu ý current state:
+Luu y current state:
 
-- `npm run dev:app` và `npm run build` hiện tự chạy `npm run prisma:generate` trước để tránh dùng Prisma client stale/sai engine sau khi đổi schema hoặc client từng được generate theo mode khác.
+- `npm run dev:app` va `npm run build` hien tu chay `npm run prisma:generate` truoc de tranh dung Prisma client stale/sai engine sau khi doi schema hoac client tung duoc generate theo mode khac.
 
-## Scripts chính
+## Scripts chinh
 
-| Script | Mục đích current state |
+| Script | Muc dich current state |
 | --- | --- |
 | `npm run build` | Build TypeScript sang `dist` |
-| `npm start` | Chạy `dist/index.js` |
-| `npm run dev:app` | Chạy `src/index.ts` bằng `ts-node` |
-| `npm run dev:local` | Copy `.env.local` sang `.env` rồi chạy app |
-| `npm run prisma:generate` | Tạo Prisma client |
-| `npm run prisma:migrate` | Chạy Prisma migrate dev |
+| `npm start` | Chay `dist/index.js` |
+| `npm run dev:app` | Chay `src/index.ts` bang `ts-node` |
+| `npm run dev:local` | Copy `.env.local` sang `.env` roi chay app |
+| `npm run prisma:generate` | Tao Prisma client |
+| `npm run prisma:migrate` | Chay Prisma migrate dev |
 | `npm run prisma:deploy` | Deploy migration |
-| `npm run prisma:seed` | Seed dữ liệu |
-| `npm run test:mini-link` | Chạy test flow mini app link token |
+| `npm run prisma:seed` | Seed du lieu |
+| `npm run test:mini-link` | Chay test flow mini app link token |
 
-## Env đang dùng
+## Env dang dung
 
-Biến nền tảng:
+Bien nen tang:
 
 - `DATABASE_URL`
 - `DB_HOST`
@@ -72,7 +75,7 @@ Biến nền tảng:
 - `PORT`
 - `NODE_ENV`
 
-Biến mini app / production:
+Bien mini app / production:
 
 - `MINI_APP_LAUNCH_MODE`
 - `MINI_APP_WEB_URL`
@@ -83,20 +86,24 @@ Biến mini app / production:
 
 ## Current-state notes
 
-- `src/app.ts` tạo cả Express app lẫn Socket.IO server; `src/index.ts` là listener entrypoint chính.
-- Repo hiện dùng đồng thời Prisma và model layer trong `src/models`.
-- `create-env-files.ps1` không tạo đầy đủ các biến mini app production đang được code sử dụng.
-- `POST /api/mini/auth/dev-login` chi hoạt động ngoài production và chỉ nhận request local (`localhost`, `127.0.0.1`, `::1`) để đăng nhập mini app browser local bằng email/password của department account.
+- `src/app.ts` tao ca Express app lan Socket.IO server; `src/index.ts` la listener entrypoint chinh.
+- Repo hien dung dong thoi Prisma va model layer trong `src/models`.
+- `create-env-files.ps1` khong tao day du cac bien mini app production dang duoc code su dung.
+- `POST /api/mini/auth/dev-login` chi hoat dong ngoai production va chi nhan request local (`localhost`, `127.0.0.1`, `::1`) de dang nhap mini app browser local bang email/password cua department account.
+- `POST /api/mini/auth/password-login` cho phep dang nhap mini app bang email/password cua tai khoan web, nhung current state van chi cho user co `isDepartmentAccount = true`, khong phai `isFloorAccount`, va co `organizationId`.
+- `GET /api/mini/dashboard-options` tra du lieu home mini app gom `floorAccounts` va `departments` theo `organizationId` cua mini token; mini app dung `departments` lam danh sach doi phan ung.
+- Account `is_department_account` khong con bi chan goi ra o backend; `validateCallPermission` van nap `userFull` va backend tiep tuc khoa sender/target theo organization.
+- `POST /api/mini/call` va `POST /api/call` hien dung chung `src/services/callDispatchService.ts` de tao call log, incident case va socket event; ca route mini app va web deu truyen `excludeUserNames` de neu goi vao chinh doi hien tai thi user gui se bi loai khoi receiver list. Rieng mini app route hien tra them `receiverNames` cung `callId` de frontend mo modal theo doi trang thai cuoc goi.
 
 ### Update 2026-03-07
 
-- Route write cho `organization`, `user`, `department` và `POST /api/auth/register` đã được guard theo auth/role; controller tiếp tục khóa theo organization của requester.
-- Socket online user, handler state, history và statistics đã ưu tiên scope theo `organization_id`, có fallback cho dữ liệu legacy chưa gán `organization_id`.
-- Current state không còn script/socket process riêng hay PM2 app `bluecode-socket`; backend chỉ còn entrypoint chung `src/index.ts` -> `dist/index.js`.
+- Route write cho `organization`, `user`, `department` va `POST /api/auth/register` da duoc guard theo auth/role; controller tiep tuc khoa theo organization cua requester.
+- Socket online user, handler state, history va statistics da uu tien scope theo `organization_id`, co fallback cho du lieu legacy chua gan `organization_id`.
+- Current state khong con script/socket process rieng hay PM2 app `bluecode-socket`; backend chi con entrypoint chung `src/index.ts` -> `dist/index.js`.
 
-## Tài liệu liên quan
+## Tai lieu lien quan
 
-- [README gốc workspace](../README.md)
+- [README goc workspace](../README.md)
 - [Project context](../docs/PROJECT_CONTEXT.md)
 - [Architecture](../docs/ARCHITECTURE.md)
 - [HDSD](../docs/HDSD.md)
